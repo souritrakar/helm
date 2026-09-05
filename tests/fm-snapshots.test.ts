@@ -73,7 +73,30 @@ describe("parseFleetSnapshot", () => {
       { key: "api-shape", verb: "needs-decision", summary: "A or B?" },
     ]);
     expect(task?.actions.steer).toBe("bin/fm-send.sh fm-helm-foundation '<instruction>'");
+  });
+
+  it("reads an unprobed endpoint, which the seam reports with a null exists", () => {
+    const snapshot = parseFleetSnapshot(fixture("fleet-snapshot.v1.json"));
+
+    const task = snapshot.tasks.find((candidate) => candidate.id === "helm-foundation");
+    expect(task?.endpoint.target).toBeNull();
+    expect(task?.endpoint.exists).toBeNull();
+    expect(task?.endpoint.status).toBe("unknown");
+  });
+
+  it("reads a task's endpoint target when the snapshot carries one", () => {
+    const doc = mutate("fleet-snapshot.v1.json", (snapshot) => {
+      const tasks = snapshot.tasks as { id: string; endpoint: Record<string, unknown> }[];
+      const task = tasks.find((candidate) => candidate.id === "helm-foundation")!;
+      task.endpoint.target = "default:w2:p2";
+      task.endpoint.exists = true;
+    });
+
+    const parsed = parseFleetSnapshot(doc);
+
+    const task = parsed.tasks.find((candidate) => candidate.id === "helm-foundation");
     expect(task?.endpoint.target).toBe("default:w2:p2");
+    expect(task?.endpoint.exists).toBe(true);
   });
 
   it("parses a secondmate task, whose actions carry send instead of steer", () => {

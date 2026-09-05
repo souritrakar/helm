@@ -13,6 +13,19 @@ import { join } from "node:path";
 /** The home path a recorded fixture is normalized to. */
 export const FIXTURE_HOME = "/fixture/firstmate";
 
+/** The firstmate checkout path a recording is normalized to. */
+export const FIXTURE_FM_ROOT = "/fixture/firstmate-root";
+
+/**
+ * The instant a recording is made at.
+ *
+ * `fm-fleet-snapshot.sh` honours `FM_SNAPSHOT_NOW` / `FM_SNAPSHOT_NOW_EPOCH`,
+ * so pinning both makes `generated`, `observed_at`, and every `age_seconds`
+ * (SNAPSHOT_EPOCH minus the status file's mtime) the same on every run.
+ */
+export const FIXTURE_NOW = "2026-09-04T23:56:43Z";
+export const FIXTURE_NOW_EPOCH = Math.trunc(Date.parse(FIXTURE_NOW) / 1000);
+
 /**
  * Locate a real firstmate `bin/`.
  *
@@ -49,14 +62,21 @@ export function requireFirstmateBin(bin: string | null): asserts bin is string {
 }
 
 /**
- * Replace the values that differ between two runs of the same seam: the home
- * path it was invoked against, and the timestamps it stamps on the document.
- * Everything else — every derived field — is compared verbatim.
+ * Replace the two paths that differ between machines: the home the seam was
+ * invoked against, and the firstmate checkout the script resolved itself from
+ * (`roots.fm_root`, taken from the script's own location). The clock is pinned
+ * at the source through {@link FIXTURE_NOW}, so no timestamp is rewritten here
+ * and every derived field is compared verbatim.
  */
-export function normalizeSnapshot(document: unknown, home: string): unknown {
+export function normalizeSnapshot(document: unknown, home: string, fmRoot: string): unknown {
   const json = JSON.stringify(document)
-    .split(JSON.stringify(home).slice(1, -1))
+    .split(jsonEscaped(home))
     .join(FIXTURE_HOME)
-    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/g, "2026-09-04T23:56:43Z");
+    .split(jsonEscaped(fmRoot))
+    .join(FIXTURE_FM_ROOT);
   return JSON.parse(json) as unknown;
+}
+
+function jsonEscaped(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
 }

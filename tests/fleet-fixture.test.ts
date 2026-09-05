@@ -8,14 +8,16 @@
  * `raw` line beside it — fails here rather than quietly validating helm's
  * schemas against a document the fleet cannot produce.
  */
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { runArgv } from "@/lib/exec";
 import { parseFleetSnapshot } from "@/lib/fm";
 import {
+  FIXTURE_NOW,
+  FIXTURE_NOW_EPOCH,
   SKIP_FM_CONTRACT,
   findFirstmateBin,
   normalizeSnapshot,
@@ -36,12 +38,22 @@ describe.skipIf(SKIP_FM_CONTRACT)("fleet-snapshot.v1.json is what the real seam 
     cpSync(join(FIXTURES, "fleet-home", "backlog.md"), join(home, "data", "backlog.md"), {
       recursive: true,
     });
+    // age_seconds is the snapshot clock minus a status file's mtime, and cpSync
+    // stamps mtime at copy time. Pin both ends so the age is the same every run.
+    for (const entry of readdirSync(join(home, "state"))) {
+      utimesSync(join(home, "state", entry), FIXTURE_NOW_EPOCH, FIXTURE_NOW_EPOCH);
+    }
     const result = await runArgv(join(firstmateBin, "fm-fleet-snapshot.sh"), ["--json"], {
-      env: { ...process.env, FM_HOME: home },
+      env: {
+        ...process.env,
+        FM_HOME: home,
+        FM_SNAPSHOT_NOW: FIXTURE_NOW,
+        FM_SNAPSHOT_NOW_EPOCH: String(FIXTURE_NOW_EPOCH),
+      },
       timeoutMs: 120_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    emitted = normalizeSnapshot(JSON.parse(result.stdout) as unknown, home);
+    emitted = normalizeSnapshot(JSON.parse(result.stdout) as unknown, home, dirname(firstmateBin));
   }, 130_000);
 
   afterAll(() => {

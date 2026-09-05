@@ -1,4 +1,3 @@
-window=default:w2:p2
 endpoint_task_id=helm-foundation
 worktree=/fixture/worktree/helm
 project=/fixture/firstmate/projects/helm

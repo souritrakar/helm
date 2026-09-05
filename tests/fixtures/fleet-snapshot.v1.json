@@ -3,7 +3,7 @@
   "generated": "2026-09-04T23:56:43Z",
   "fm_home": "/fixture/firstmate",
   "roots": {
-    "fm_root": "/home/s7kar/firstmate",
+    "fm_root": "/fixture/firstmate-root",
     "state": "/fixture/firstmate/state",
     "data": "/fixture/firstmate/data",
     "config": "/fixture/firstmate/config",
@@ -147,10 +147,10 @@
         "freshness": "fresh"
       },
       "endpoint": {
-        "target": "default:w3:p1",
-        "exists": false,
-        "agent_alive": "dead",
-        "status": "absent",
+        "target": null,
+        "exists": null,
+        "agent_alive": "not_checked",
+        "status": "unknown",
         "observed_at": "2026-09-04T23:56:43Z",
         "freshness": "fresh"
       },
@@ -220,8 +220,8 @@
         "freshness": "fresh"
       },
       "endpoint": {
-        "target": "default:w2:p2",
-        "exists": true,
+        "target": null,
+        "exists": null,
         "agent_alive": "not_checked",
         "status": "unknown",
         "observed_at": "2026-09-04T23:56:43Z",
@@ -387,7 +387,7 @@
           "captured": false,
           "observed_at": "2026-09-04T23:56:43Z",
           "freshness": "unknown",
-          "reason": "terminal capture unavailable",
+          "reason": "no recorded endpoint",
           "lines": 0,
           "bytes": 0,
           "event_note_seen": false,

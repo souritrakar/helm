@@ -50,6 +50,13 @@ pnpm test
 pnpm lint
 ```
 
+`pnpm test` needs a real firstmate checkout: the decision-fold contract and the fleet-snapshot
+recording both run firstmate's own scripts against a temporary home. The suite probes
+`HELM_TEST_FM_HOME`, then `FM_HOME`, then `~/firstmate`, and FAILS when it finds none — a silent
+skip would make a green run meaningless. Point `HELM_TEST_FM_HOME` at a checkout, or set
+`HELM_SKIP_FM_CONTRACT=1` to opt out. The opt-out is for local development only; it disables the
+only proof helm's contracts still match the real seams.
+
 helm runs a **custom Node server** (`server.ts`), not `next start`, because a later lane serves a
 long-lived WebSocket carrying a terminal stream, which cannot live in a Next.js route handler.
 

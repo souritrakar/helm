@@ -119,9 +119,16 @@ export const fleetTaskSchema = z.object({
     observed_at: z.string(),
     freshness: z.string(),
   }),
+  /**
+   * Where the task's agent is reachable, if firstmate recorded one.
+   *
+   * `exists` is null until firstmate probes the backend, which it only does
+   * when a `target` is recorded (`fm-fleet-snapshot.sh` initialises
+   * `endpoint_exists=null` and overwrites it only for a non-empty target).
+   */
   endpoint: z.object({
     target: z.string().nullable(),
-    exists: z.boolean(),
+    exists: z.boolean().nullable(),
     agent_alive: z.string(),
     status: z.string(),
   }),
@@ -174,14 +181,28 @@ export const fleetSnapshotSchema = z.object({
 });
 export type FleetSnapshot = z.infer<typeof fleetSnapshotSchema>;
 
+/**
+ * How long a snapshot seam may take.
+ *
+ * `fm-fleet-snapshot.sh` budgets its own per-item timeouts — up to
+ * `FM_SNAPSHOT_SECONDMATES` (20) x `FM_SNAPSHOT_SECONDMATE_TIMEOUT` (8s), plus
+ * `FM_SNAPSHOT_CREW_STATE_TIMEOUT` (10s) per task — so a slow but healthy fleet
+ * outlasts the generic exec default. Killing it there would surface as contract
+ * drift for a snapshot that was only slow.
+ */
+export const SNAPSHOT_TIMEOUT_MS = 180_000;
+
 /** Validate an already-read `fm-fleet-snapshot.v1` document. */
 export function parseFleetSnapshot(value: unknown): FleetSnapshot {
   return validate(fleetSnapshotSchema, value, "fm-fleet-snapshot.v1");
 }
 
 /** Read the read-only structured fleet snapshot. */
-export async function fleetSnapshot(cfg: HelmConfig): Promise<FleetSnapshot> {
-  const stdout = await readJsonSeam(cfg, "fm-fleet-snapshot.sh", ["--json"]);
+export async function fleetSnapshot(
+  cfg: HelmConfig,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<FleetSnapshot> {
+  const stdout = await readJsonSeam(cfg, "fm-fleet-snapshot.sh", ["--json"], options.timeoutMs);
   return parseFleetSnapshot(stdout);
 }
 
@@ -241,8 +262,11 @@ export function parseBearingsSnapshot(value: unknown): BearingsSnapshot {
  * Local-only: the default invocation makes no network call. helm never passes
  * `--include-prs`, which is the sole path that would.
  */
-export async function bearingsSnapshot(cfg: HelmConfig): Promise<BearingsSnapshot> {
-  const stdout = await readJsonSeam(cfg, "fm-bearings-snapshot.sh", ["--json"]);
+export async function bearingsSnapshot(
+  cfg: HelmConfig,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<BearingsSnapshot> {
+  const stdout = await readJsonSeam(cfg, "fm-bearings-snapshot.sh", ["--json"], options.timeoutMs);
   return parseBearingsSnapshot(stdout);
 }
 
@@ -491,9 +515,10 @@ async function readJsonSeam(
   cfg: HelmConfig,
   script: string,
   args: readonly string[],
+  timeoutMs: number = SNAPSHOT_TIMEOUT_MS,
 ): Promise<unknown> {
   const path = join(cfg.fmBinDir, script);
-  const result = await runArgv(path, args);
+  const result = await runArgv(path, args, { timeoutMs });
   if (result.exitCode !== 0) {
     throw new FmContractError(`${script} failed: ${describeFailure(result)}`);
   }

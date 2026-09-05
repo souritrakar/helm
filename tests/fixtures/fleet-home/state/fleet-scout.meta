@@ -1,4 +1,3 @@
-window=default:w3:p1
 endpoint_task_id=fleet-scout
 harness=claude
 kind=secondmate
