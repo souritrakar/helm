@@ -317,6 +317,16 @@ export async function scanOpenDecisions(cfg: HelmConfig): Promise<OpenDecision[]
 /** `fm-send.sh` accepts these characters in a decision key. */
 const DECISION_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
 
+/**
+ * Options `fm-send.sh` still consumes at the position the answer occupies.
+ *
+ * Its argument loop keeps reading these until the first non-flag, and it has no
+ * `--` terminator, so an answer in one of these forms would be read as a second
+ * option instead of as the message. helm refuses rather than let a card's
+ * answer reach that parser (AGENTS.md hard rule 5).
+ */
+const FM_SEND_OPTIONS = ["--resolve-key", "--fire-and-forget"];
+
 export interface SendResolveKeyRequest {
   /**
    * The task id, taken verbatim from {@link FleetTask.id} or
@@ -341,6 +351,7 @@ export async function sendResolveKey(
 ): Promise<RespondResult> {
   requireSingleLineField("taskId", request.taskId);
   requireField("answer", request.answer);
+  requireNotFmSendOption(request.answer);
   if (!DECISION_KEY_PATTERN.test(request.key)) {
     throw new FmContractError(
       `sendResolveKey: key ${JSON.stringify(request.key)} is not a valid decision key (allowed: A-Z a-z 0-9 . _ -)`,
@@ -450,6 +461,16 @@ function validate<T extends z.ZodTypeAny>(
 function requireField(label: string, value: string): void {
   if (value.trim() === "") {
     throw new FmContractError(`${label} must not be empty`);
+  }
+}
+
+function requireNotFmSendOption(answer: string): void {
+  for (const option of FM_SEND_OPTIONS) {
+    if (answer === option || answer.startsWith(`${option}=`)) {
+      throw new FmContractError(
+        `answer ${JSON.stringify(answer)} would be read as fm-send.sh's ${option} option rather than as the message, and fm-send.sh has no -- terminator`,
+      );
+    }
   }
 }
 

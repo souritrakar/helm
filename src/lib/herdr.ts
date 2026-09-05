@@ -123,6 +123,8 @@ export function observeTerminal(
     stderr += chunk;
   });
 
+  let recordDrift: string | null = null;
+
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   lines.on("line", (line) => {
     if (line.trim() === "") return;
@@ -130,8 +132,9 @@ export function observeTerminal(
       queue.push(parseTerminalRecord(line));
     } catch (cause) {
       // A record helm cannot parse means the stream is no longer trustworthy.
+      recordDrift = `herdr terminal session observe ${target}: ${errorMessage(cause)}`;
       child.kill("SIGTERM");
-      queue.fail(`herdr terminal session observe ${target}: ${errorMessage(cause)}`);
+      queue.fail(recordDrift);
     }
   });
 
@@ -146,7 +149,9 @@ export function observeTerminal(
       resolve({
         exitCode: code,
         signal,
-        error: code === 0 || code === null ? null : `${argv[0]}: exited ${code}: ${stderr.trim()}`,
+        error:
+          recordDrift ??
+          (code === 0 || code === null ? null : `${argv[0]}: exited ${code}: ${stderr.trim()}`),
       });
     });
   });
@@ -293,8 +298,9 @@ export async function paneList(cfg: HelmConfig, workspaceId?: string): Promise<H
  */
 export type HerdrSubscription =
   | {
+      /** Per-pane only: protocol 20 requires `pane_id` on this variant. */
       readonly type: "pane.agent_status_changed";
-      readonly pane_id?: string;
+      readonly pane_id: string;
       readonly agent_status?: HerdrAgentStatus | null;
     }
   | { readonly type: "pane.created" }
@@ -374,13 +380,31 @@ const subscribeAckSchema = z.object({
   result: z.object({ type: z.literal("subscription_started") }),
 });
 
+/** Protocol-20 `error_response`. It carries no `event`, so it is not an event. */
+const errorResponseSchema = z.object({
+  id: z.string(),
+  error: z.object({ code: z.string(), message: z.string() }),
+});
+
+/**
+ * Read a control-socket error frame, or `null` when the line is not one.
+ *
+ * The server can answer a request with `{id, error}` at any point. Treating it
+ * as an unmodelled event would discard it and leave the stream silently quiet.
+ */
+export function parseHerdrErrorResponse(value: unknown): string | null {
+  const parsed = errorResponseSchema.safeParse(value);
+  return parsed.success ? `${parsed.data.error.code}: ${parsed.data.error.message}` : null;
+}
+
 /**
  * Open one control-socket connection and subscribe to `subscriptions`.
  *
  * `onEvent` is called for each event helm models. A line naming an event kind
  * helm does not model is ignored, so a Herdr upgrade that adds kinds cannot
- * break the stream; a drifted payload on a kind helm DOES model closes the
- * stream and rejects {@link HerdrEventStream.closed}.
+ * break the stream; a drifted payload on a kind helm DOES model, and a server
+ * `error_response` frame, both close the stream and reject
+ * {@link HerdrEventStream.closed}.
  */
 export function subscribeEvents(
   cfg: HelmConfig,
@@ -422,8 +446,14 @@ export function subscribeEvents(
     const lines = createInterface({ input: socket, crlfDelay: Infinity });
     lines.on("line", (line) => {
       if (line.trim() === "") return;
+      const raw = safeParseJson(line);
+      const errorResponse = parseHerdrErrorResponse(raw);
+      if (errorResponse !== null) {
+        fail(`herdr events.subscribe: ${errorResponse}`);
+        return;
+      }
       if (!acknowledged) {
-        const ack = subscribeAckSchema.safeParse(safeParseJson(line));
+        const ack = subscribeAckSchema.safeParse(raw);
         if (!ack.success) {
           fail(`herdr events.subscribe was not acknowledged: ${line}`);
           return;

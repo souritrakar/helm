@@ -29,6 +29,33 @@ describe("sendResolveKey", () => {
   ])("rejects %s before invoking fm-send.sh", async (_case, request) => {
     await expect(sendResolveKey(CONFIG, request)).rejects.toThrow(FmContractError);
   });
+
+  it.each([
+    ["--resolve-key=some-other-key"],
+    ["--resolve-key"],
+    ["--fire-and-forget=delivery-1"],
+    ["--fire-and-forget"],
+  ])("rejects the answer %s, which fm-send.sh would read as an option", async (answer) => {
+    await expect(
+      sendResolveKey(CONFIG, { taskId: "helm", key: "api-shape", answer }),
+    ).rejects.toThrow(/would be read as fm-send\.sh's/);
+  });
+
+  it("passes an answer that merely starts with a dash, which fm-send.sh reads as the message", async () => {
+    const result = await sendResolveKey(CONFIG, {
+      taskId: "helm",
+      key: "api-shape",
+      answer: "-1 is fine",
+    });
+
+    expect(result.argv).toEqual([
+      "/fixture/firstmate/bin/fm-send.sh",
+      "helm",
+      "--resolve-key",
+      "api-shape",
+      "-1 is fine",
+    ]);
+  });
 });
 
 describe("captainHoldAnswers", () => {

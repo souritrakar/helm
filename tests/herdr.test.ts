@@ -2,7 +2,7 @@
  * Contract tests for the Herdr wire shapes, over recorded protocol-20 records.
  * Hermetic: no Herdr server is contacted.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
   herdrAgentSchema,
   herdrPaneSchema,
   parseHerdrEvent,
+  observeTerminal,
   parseTerminalRecord,
   subscribeEvents,
   type HerdrEvent,
@@ -173,6 +174,10 @@ describe("subscribeEvents", () => {
   let socketPath: string;
   /** Lines the stub server writes once a subscription arrives. */
   let scripted: string[];
+  /** Whether the stub server acknowledges the subscription before `scripted`. */
+  let acknowledge: boolean;
+  /** The subscribe request the stub server received, as sent on the wire. */
+  let request: unknown;
 
   function config(): HelmConfig {
     return {
@@ -190,10 +195,15 @@ describe("subscribeEvents", () => {
     socketDir = mkdtempSync(join(tmpdir(), "helm-herdr-"));
     socketPath = join(socketDir, "herdr.sock");
     scripted = [];
+    acknowledge = true;
+    request = undefined;
     server = createServer((connection) => {
       connection.setEncoding("utf8");
-      connection.once("data", () => {
-        connection.write(`${JSON.stringify({ result: { type: "subscription_started" } })}\n`);
+      connection.once("data", (chunk: string) => {
+        request = JSON.parse(chunk.trim());
+        if (acknowledge) {
+          connection.write(`${JSON.stringify({ result: { type: "subscription_started" } })}\n`);
+        }
         for (const line of scripted) connection.write(`${line}\n`);
       });
       connection.on("error", () => undefined);
@@ -204,6 +214,23 @@ describe("subscribeEvents", () => {
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(socketDir, { recursive: true, force: true });
+  });
+
+  it("sends each subscription verbatim, including the pane_id protocol 20 requires", async () => {
+    const stream = subscribeEvents(
+      config(),
+      [{ type: "pane.agent_status_changed", pane_id: "w1:p3" }],
+      () => undefined,
+    );
+
+    await stream.ready;
+    stream.close();
+    await stream.closed.catch(() => undefined);
+
+    expect(request).toMatchObject({
+      method: "events.subscribe",
+      params: { subscriptions: [{ type: "pane.agent_status_changed", pane_id: "w1:p3" }] },
+    });
   });
 
   it("delivers a modelled event", async () => {
@@ -247,6 +274,34 @@ describe("subscribeEvents", () => {
     expect(received.map((event) => event.event)).toEqual(["pane_closed"]);
   });
 
+  it("surfaces a server error frame instead of discarding it as an unmodelled event", async () => {
+    scripted = [
+      JSON.stringify({
+        id: "helm:events:1",
+        error: { code: "invalid_request", message: "missing field `pane_id`" },
+      }),
+    ];
+    const stream = subscribeEvents(config(), [{ type: "pane.closed" }], () => undefined);
+
+    await stream.ready;
+
+    await expect(stream.closed).rejects.toThrow(/invalid_request: missing field `pane_id`/);
+  });
+
+  it("rejects ready with the server's reason when the subscription itself is refused", async () => {
+    acknowledge = false;
+    scripted = [
+      JSON.stringify({
+        id: "helm:events:1",
+        error: { code: "invalid_request", message: "missing field `pane_id`" },
+      }),
+    ];
+    const stream = subscribeEvents(config(), [{ type: "pane.closed" }], () => undefined);
+
+    await expect(stream.ready).rejects.toThrow(/invalid_request: missing field `pane_id`/);
+    await expect(stream.closed).rejects.toThrow(/invalid_request/);
+  });
+
   it("tears the stream down and reports a drifted payload on a modelled kind", async () => {
     scripted = [
       JSON.stringify({ event: "pane_closed", data: { type: "pane_closed", pane_id: "w1:p3" } }),
@@ -260,5 +315,64 @@ describe("subscribeEvents", () => {
 
     await expect(stream.closed).rejects.toThrow(/pane_closed/);
     expect(received).toEqual([]);
+  });
+});
+
+describe("observeTerminal exit", () => {
+  let binDir: string;
+
+  /**
+   * A stand-in `herdr` that prints `lines`, then stays alive to be killed.
+   * `exec` so the surviving process owns stdout and receives the signal itself.
+   */
+  function stubHerdr(lines: readonly string[]): HelmConfig {
+    const path = join(binDir, "herdr-stub");
+    const prints = lines.map((line) => `printf '%s\\n' ${JSON.stringify(line)}`).join("\n");
+    writeFileSync(path, `#!/bin/sh\n${prints}\nexec sleep 30\n`, { mode: 0o755 });
+    return {
+      fmHome: "/fixture/firstmate",
+      fmBinDir: "/fixture/firstmate/bin",
+      fmStateDir: "/fixture/firstmate/state",
+      herdrSocketPath: join(binDir, "herdr.sock"),
+      herdrBin: path,
+      port: DEFAULT_PORT,
+      bind: DEFAULT_BIND,
+    };
+  }
+
+  const FRAME =
+    '{"type":"terminal.frame","seq":1,"encoding":"ansi","bytes":"eA==","full":true,"width":80,"height":24}';
+
+  beforeEach(() => {
+    binDir = mkdtempSync(join(tmpdir(), "helm-observe-"));
+  });
+
+  afterEach(() => {
+    rmSync(binDir, { recursive: true, force: true });
+  });
+
+  it("reports a clean close with no error when the caller stops the observation", async () => {
+    const observation = observeTerminal(stubHerdr([FRAME]), "w1:p1", { cols: 80, rows: 24 });
+
+    const first = await observation[Symbol.asyncIterator]().next();
+    observation.close();
+    const exit = await observation.exit;
+
+    expect(first.value).toMatchObject({ type: "terminal.frame", seq: 1 });
+    expect(exit.error).toBeNull();
+    expect(exit.signal).toBe("SIGTERM");
+  });
+
+  it("carries the parse failure into exit when a record drifts, not a bare SIGTERM", async () => {
+    const observation = observeTerminal(
+      stubHerdr(['{"type":"terminal.frame","seq":"1"}']),
+      "w1:p1",
+      { cols: 80, rows: 24 },
+    );
+
+    const exit = await observation.exit;
+
+    expect(exit.signal).toBe("SIGTERM");
+    expect(exit.error).toMatch(/herdr terminal session observe w1:p1/);
   });
 });
