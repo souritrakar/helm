@@ -32,6 +32,12 @@ These are not style preferences. Each one protects something that fails silently
 5. **helm is a channel, not an authority.** It never invents a close mode, maps a key to a task, or
    writes a decision record. Every `--resolve-key` value comes verbatim from the fold that produced
    the card. The responder routing policy (SPEC decision D-C) is still the captain's call.
+   A task is addressed by its **id**: `fm-send.sh` resolves a bare exact task id natively
+   (`bin/fm-send.sh` lines 5-6, `fm_backend_task_id_for_selector` in `bin/fm-backend.sh`), so helm
+   passes `task.id` verbatim and derives nothing. `actions.steer` is display and provenance text —
+   a whole command line with a placeholder — and is **never** a send target. Building `fm-<id>` is
+   the identity arithmetic this rule forbids. (Captain decision `helm-lane-a-review`, which
+   supersedes the earlier "take the selector from `actions.steer`" note.)
 6. **No Herdr lifecycle control.** helm observes, sends text, and reads. It never starts, stops,
    restarts, or deletes a session, workspace, or pane.
 

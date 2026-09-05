@@ -7,42 +7,18 @@
  * `scan_open_decisions` over a temporary FM_HOME built from fixtures, so they
  * prove the wrapper reaches the real library and never touch the live fleet.
  */
-import { copyFileSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, existsSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { loadConfig, type HelmConfig } from "@/lib/config";
 import { FmContractError, parseOpenDecisionLines, scanOpenDecisions } from "@/lib/fm";
+import { SKIP_FM_CONTRACT, findFirstmateBin, requireFirstmateBin } from "./seam";
 
 const FIXTURE_STATUS = join(import.meta.dirname, "fixtures", "status");
 
-/**
- * Locate a real firstmate `bin/` to borrow the classify library from. Copying
- * the library instead would fork the fold, which is the exact failure this test
- * exists to prevent.
- */
-function findFirstmateBin(): string | null {
-  const candidates = [
-    process.env.HELM_TEST_FM_HOME,
-    process.env.FM_HOME,
-    join(homedir(), "firstmate"),
-  ];
-  for (const home of candidates) {
-    if (home === undefined || home === "") continue;
-    if (existsSync(join(home, "bin", "fm-classify-lib.sh"))) return join(home, "bin");
-  }
-  return null;
-}
-
 const firstmateBin = findFirstmateBin();
-
-/**
- * Explicit local-dev opt-out. Absence of the library is otherwise a FAILURE,
- * never a skip: this suite is the only proof of AGENTS.md hard rule 2, and a
- * silent skip would let a green `pnpm test` mean nothing.
- */
-const skipContract = process.env.HELM_SKIP_FM_CONTRACT === "1";
 
 describe("parseOpenDecisionLines", () => {
   it("splits only the first three tabs, so a note may contain tabs", () => {
@@ -64,18 +40,12 @@ describe("parseOpenDecisionLines", () => {
   });
 });
 
-describe.skipIf(skipContract)("scanOpenDecisions against the real classify library", () => {
+describe.skipIf(SKIP_FM_CONTRACT)("scanOpenDecisions against the real classify library", () => {
   let home = "";
   let config: HelmConfig;
 
   beforeAll(() => {
-    if (firstmateBin === null) {
-      throw new Error(
-        "no firstmate bin/fm-classify-lib.sh found under HELM_TEST_FM_HOME, FM_HOME, or ~/firstmate; " +
-          "the fold contract cannot be proven. Point HELM_TEST_FM_HOME at a firstmate checkout, " +
-          "or set HELM_SKIP_FM_CONTRACT=1 to opt out deliberately.",
-      );
-    }
+    requireFirstmateBin(firstmateBin);
     home = mkdtempSync(join(tmpdir(), "helm-fold-"));
     // Symlink the whole bin directory: the library sources a sibling relative to
     // its own location, so a per-file symlink would break that resolution.

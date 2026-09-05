@@ -88,7 +88,7 @@ function requireReadableDir(label: string, value: string | undefined): string {
 
 function resolveHerdrSocketPath(env: ConfigEnv): string {
   const explicit = nonEmpty("HERDR_SOCKET_PATH", env.HERDR_SOCKET_PATH);
-  const value = explicit ?? join(env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "herdr", "herdr.sock");
+  const value = explicit ?? join(configHome(env), "herdr", "herdr.sock");
   if (!isAbsolute(value)) {
     throw new ConfigError(`HERDR_SOCKET_PATH must be an absolute path, got ${JSON.stringify(value)}`);
   }
@@ -115,6 +115,18 @@ function parseBind(label: string, raw: string | undefined): string {
     throw new ConfigError(`${label} must not contain whitespace, got ${JSON.stringify(value)}`);
   }
   return value;
+}
+
+/**
+ * `$XDG_CONFIG_HOME`, or `$HOME/.config`.
+ *
+ * The XDG Base Directory spec defines an `XDG_CONFIG_HOME` that is "either not
+ * set or empty" as meaning the default, so an exported-but-empty value takes
+ * the fallback rather than failing the way a deliberately set variable does.
+ */
+function configHome(env: ConfigEnv): string {
+  const value = env.XDG_CONFIG_HOME?.trim();
+  return value === undefined || value === "" ? join(homedir(), ".config") : value;
 }
 
 function nonEmpty(label: string, raw: string | undefined): string | undefined {

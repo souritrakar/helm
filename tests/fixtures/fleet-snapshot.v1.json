@@ -3,7 +3,7 @@
   "generated": "2026-09-04T23:56:43Z",
   "fm_home": "/fixture/firstmate",
   "roots": {
-    "fm_root": "/fixture/firstmate",
+    "fm_root": "/home/s7kar/firstmate",
     "state": "/fixture/firstmate/state",
     "data": "/fixture/firstmate/data",
     "config": "/fixture/firstmate/config",
@@ -41,12 +41,12 @@
         "pr_url": null,
         "report_path": null,
         "local_note": null,
-        "raw": "- [ ] helm-foundation - helm Lane A - foundation & contracts (since 2026-09-04)",
+        "raw": "- [ ] helm-foundation - helm Lane A - foundation & contracts (repo: helm) (kind: ship) (since 2026-09-04)",
         "body_lines": [],
         "body_excerpt": null,
         "unresolved_blocker_ids": [],
         "current_role": "worker",
-        "requires_child_metadata": false,
+        "requires_child_metadata": true,
         "captain_actionable": false,
         "deferred_marker": false
       },
@@ -78,11 +78,11 @@
         "pr_url": null,
         "report_path": "data/webface-plan/report.md",
         "local_note": null,
-        "raw": "- [ ] webface-plan - helm SPEC - captain call inventory (held: captain)",
+        "raw": "- [ ] webface-plan - helm SPEC - captain call inventory data/webface-plan/report.md (repo: helm) (kind: scout) (hold: six spec decisions await the captain) (hold-kind: captain) (since 2026-09-04)",
         "body_lines": [],
         "body_excerpt": null,
         "unresolved_blocker_ids": [],
-        "current_role": "held",
+        "current_role": "queued",
         "requires_child_metadata": false,
         "captain_actionable": true,
         "deferred_marker": false
@@ -99,6 +99,79 @@
     ]
   },
   "tasks": [
+    {
+      "id": "fleet-scout",
+      "kind": "secondmate",
+      "harness": "claude",
+      "mode": "local-only",
+      "yolo": "off",
+      "project": "",
+      "spawn_gen": "s1788566171.146855.23484",
+      "backend": "herdr",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/fixture/firstmate/state/fleet-scout.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/fixture/firstmate/state/fleet-scout.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "reading the spec",
+            "raw": "working: reading the spec"
+          }
+        },
+        "worktree": {
+          "path": null,
+          "present": false
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/fixture/firstmate/data/fleet-scout/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "none",
+        "detail": "worktree gone (torn down?)",
+        "raw": "state: unknown · source: none · worktree gone (torn down?)",
+        "observed_at": "2026-09-04T23:56:43Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "default:w3:p1",
+        "exists": false,
+        "agent_alive": "dead",
+        "status": "absent",
+        "observed_at": "2026-09-04T23:56:43Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: reading the spec"
+      },
+      "actions": {
+        "send": "bin/fm-send.sh fm-fleet-scout '<request>'",
+        "watch": "read status/doc return channel; do not routinely fm-peek a secondmate for answers",
+        "return_channel_note": "Secondmate answers come back through status/doc paths after a marked fm-send request."
+      },
+      "backlog": null
+    },
     {
       "id": "helm-foundation",
       "kind": "ship",
@@ -119,14 +192,14 @@
           "present": true,
           "kind": "event_history",
           "last_event": {
-            "state": "working",
-            "note": "scaffold up",
-            "raw": "working: scaffold up"
+            "state": "needs-decision",
+            "note": "A or B?",
+            "raw": "needs-decision [key=api-shape]: A or B?"
           }
         },
         "worktree": {
           "path": "/fixture/worktree/helm",
-          "present": true
+          "present": false
         },
         "home": {
           "path": null,
@@ -139,10 +212,10 @@
       },
       "secondmate_projects": [],
       "current_state": {
-        "state": "working",
-        "source": "pane",
-        "detail": "harness busy (claude-hook)",
-        "raw": "state: working · source: pane · harness busy (claude-hook)",
+        "state": "unknown",
+        "source": "none",
+        "detail": "worktree gone (torn down?)",
+        "raw": "state: unknown · source: none · worktree gone (torn down?)",
         "observed_at": "2026-09-04T23:56:43Z",
         "freshness": "fresh"
       },
@@ -169,7 +242,7 @@
           }
         ],
         "scout_report_present": false,
-        "last_event_text": "working: scaffold up"
+        "last_event_text": "needs-decision [key=api-shape]: A or B?"
       },
       "actions": {
         "watch": "bin/fm-peek.sh fm-helm-foundation",
@@ -204,108 +277,139 @@
         "pr_url": null,
         "report_path": null,
         "local_note": null,
-        "raw": "- [ ] helm-foundation - helm Lane A - foundation & contracts (since 2026-09-04)",
+        "raw": "- [ ] helm-foundation - helm Lane A - foundation & contracts (repo: helm) (kind: ship) (since 2026-09-04)",
         "body_lines": [],
         "body_excerpt": null,
         "unresolved_blocker_ids": [],
         "current_role": "worker",
-        "requires_child_metadata": false,
+        "requires_child_metadata": true,
         "captain_actionable": false,
         "deferred_marker": false
       }
-    },
-    {
-      "id": "fleet-scout",
-      "kind": "secondmate",
-      "harness": "claude",
-      "mode": "local-only",
-      "yolo": "off",
-      "project": null,
-      "spawn_gen": "s1788566171.146855.23483",
-      "backend": "herdr",
-      "remote": null,
-      "paths": {
-        "meta": {
-          "path": "/fixture/firstmate/state/fleet-scout.meta",
-          "present": true
-        },
-        "status_log": {
-          "path": "/fixture/firstmate/state/fleet-scout.status",
-          "present": true,
-          "kind": "event_history",
-          "last_event": {
-            "state": "working",
-            "note": "reading the spec",
-            "raw": "working: reading the spec"
-          }
-        },
-        "worktree": {
-          "path": null,
-          "present": false
-        },
-        "home": {
-          "path": null,
-          "present": false
-        },
-        "report": {
-          "path": "/fixture/firstmate/data/fleet-scout/report.md",
-          "present": false
-        }
-      },
-      "secondmate_projects": [],
-      "current_state": {
-        "state": "working",
-        "source": "pane",
-        "detail": "harness busy (claude-hook)",
-        "raw": "state: working · source: pane · harness busy (claude-hook)",
-        "observed_at": "2026-09-04T23:56:43Z",
-        "freshness": "fresh"
-      },
-      "endpoint": {
-        "target": "default:w3:p1",
-        "exists": true,
-        "agent_alive": "not_checked",
-        "status": "unknown",
-        "observed_at": "2026-09-04T23:56:43Z",
-        "freshness": "fresh"
-      },
-      "pr": {
-        "url": null,
-        "source": "absent"
-      },
-      "hints": {
-        "pending_decision": false,
-        "blocked_event": false,
-        "open_decisions": [],
-        "scout_report_present": false,
-        "last_event_text": "working: reading the spec"
-      },
-      "actions": {
-        "send": "bin/fm-send.sh fm-fleet-scout '<request>'",
-        "watch": "read status/doc return channel; do not routinely fm-peek a secondmate for answers",
-        "return_channel_note": "Secondmate answers come back through status/doc paths after a marked fm-send request."
-      },
-      "backlog": null
     }
   ],
   "main_inventory": {
-    "valid": true,
-    "reason": null,
+    "valid": false,
+    "reason": "unstructured current backlog row",
     "orphan_in_flight": [],
     "unstructured_current_count": 1
   },
   "scout_reports": [],
   "secondmate_current": {
     "registry": {
+      "present": false,
       "available": true,
-      "reason": null
+      "complete": true,
+      "reason": null,
+      "provenance": "registered-table",
+      "path": "/fixture/firstmate/data/secondmates.md",
+      "freshness": {
+        "status": "fresh",
+        "observed_at": "2026-09-04T23:56:43Z"
+      },
+      "records": [],
+      "input_truncated": false,
+      "records_truncated": false,
+      "reasons": [],
+      "lines_in_window": 0,
+      "records_in_window": 0
     },
-    "records": [],
+    "records": [
+      {
+        "id": "fleet-scout",
+        "home": null,
+        "host": null,
+        "remote": false,
+        "registered": false,
+        "spawn_gen": "s1788566171.146855.23484",
+        "current": {
+          "state": "unknown",
+          "reason": "secondmate metadata is not registered"
+        },
+        "invalidity": null,
+        "reconcile_inventory": null,
+        "provenance": {
+          "selected": "parent-event-fallback",
+          "structured_home": null,
+          "parent_event_role": "fallback-only-not-current"
+        },
+        "freshness": {
+          "status": "historical-event",
+          "observed_at": "2026-09-04T23:56:43Z",
+          "age_seconds": 0
+        },
+        "active_children": [],
+        "decisions_open": [],
+        "holds": [],
+        "queued": [],
+        "landed": [],
+        "endpoints": [],
+        "counts": {
+          "active_children": 0,
+          "decisions_open": 0,
+          "holds": 0,
+          "queued": 0,
+          "landed": 0,
+          "endpoints": 0
+        },
+        "omitted": [],
+        "parent_event": {
+          "raw": "working: reading the spec",
+          "note": "reading the spec",
+          "age_seconds": 0,
+          "open_activities": [
+            {
+              "key": "default",
+              "verb": "working",
+              "summary": "reading the spec"
+            }
+          ],
+          "open_decisions": [],
+          "activity_scan": {
+            "records": [
+              {
+                "key": "default",
+                "verb": "working",
+                "summary": "reading the spec"
+              }
+            ],
+            "available": true,
+            "input_truncated": false,
+            "retained_truncated": false,
+            "reasons": [],
+            "lines_in_window": 1,
+            "records_in_window": 1
+          }
+        },
+        "terminal_evidence": {
+          "provenance": "parent-direct-report-terminal",
+          "trust": "untrusted-supplement",
+          "captured": false,
+          "observed_at": "2026-09-04T23:56:43Z",
+          "freshness": "unknown",
+          "reason": "terminal capture unavailable",
+          "lines": 0,
+          "bytes": 0,
+          "event_note_seen": false,
+          "contradiction": false
+        },
+        "contradiction": false
+      }
+    ],
     "total_registered": 0,
-    "total": 0,
-    "shown": 0,
-    "truncated": false
+    "total": 1,
+    "shown": 1,
+    "truncated": 0
   },
-  "secondmate_landed": [],
-  "secondmate_guidance": []
+  "secondmate_landed": {
+    "records": [],
+    "truncated": [],
+    "unreadable": [
+      "<fleet-scout: unavailable>"
+    ],
+    "partial": []
+  },
+  "secondmate_guidance": {
+    "note": "For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
+  }
 }

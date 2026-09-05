@@ -1,0 +1,10 @@
+window=default:w2:p2
+endpoint_task_id=helm-foundation
+worktree=/fixture/worktree/helm
+project=/fixture/firstmate/projects/helm
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+spawn_gen=s1788566171.146855.23483
+backend=herdr

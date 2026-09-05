@@ -3,7 +3,7 @@
  * here costs an operator far more than the branch costs to test.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -58,6 +58,15 @@ describe("loadConfig", () => {
     const config = loadConfig({ FM_HOME: home, XDG_CONFIG_HOME: "/xdg" });
 
     expect(config.herdrSocketPath).toBe("/xdg/herdr/herdr.sock");
+  });
+
+  it.each([
+    ["empty", ""],
+    ["whitespace only", "   "],
+  ])("treats an XDG_CONFIG_HOME that is %s as unset, per the XDG spec", (_case, value) => {
+    const config = loadConfig({ FM_HOME: home, XDG_CONFIG_HOME: value });
+
+    expect(config.herdrSocketPath).toBe(join(homedir(), ".config", "herdr", "herdr.sock"));
   });
 
   it.each([

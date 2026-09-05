@@ -30,13 +30,27 @@ function mutate(name: string, edit: (doc: Record<string, unknown>) => void): unk
   return clone;
 }
 
+/** The task the recorded fixture carries an open decision for. */
+function decidingTask(snapshot: Record<string, unknown>): {
+  hints: { open_decisions: unknown };
+} {
+  const tasks = snapshot.tasks as ({ id: string } & { hints: { open_decisions: unknown } })[];
+  return tasks.find((task) => task.id === "helm-foundation")!;
+}
+
+function structuredRow(snapshot: Record<string, unknown>, id: string): Record<string, unknown> {
+  const backlog = snapshot.backlog as { records: Record<string, unknown>[] };
+  return backlog.records.find((record) => record.id === id)!;
+}
+
 describe("parseFleetSnapshot", () => {
   it("parses a recorded fm-fleet-snapshot.v1 document", () => {
     const snapshot = parseFleetSnapshot(fixture("fleet-snapshot.v1.json"));
 
     expect(snapshot.schema).toBe("fm-fleet-snapshot.v1");
     expect(snapshot.roots.state).toBe("/fixture/firstmate/state");
-    expect(snapshot.main_inventory.valid).toBe(true);
+    expect(snapshot.main_inventory.valid).toBe(false);
+    expect(snapshot.main_inventory.reason).toBe("unstructured current backlog row");
   });
 
   it("reads the captain-actionable backlog row the inbox binds to", () => {
@@ -53,7 +67,7 @@ describe("parseFleetSnapshot", () => {
 
   it("reads a task's open decisions and its steer action verbatim", () => {
     const snapshot = parseFleetSnapshot(fixture("fleet-snapshot.v1.json"));
-    const task = snapshot.tasks[0];
+    const task = snapshot.tasks.find((candidate) => candidate.id === "helm-foundation");
 
     expect(task?.hints.open_decisions).toEqual([
       { key: "api-shape", verb: "needs-decision", summary: "A or B?" },
@@ -69,6 +83,17 @@ describe("parseFleetSnapshot", () => {
     expect(secondmate?.id).toBe("fleet-scout");
     expect(secondmate?.actions.steer ?? null).toBeNull();
     expect(secondmate?.actions.send).toBe("bin/fm-send.sh fm-fleet-scout '<request>'");
+  });
+
+  it("pairs a held, queued row with the role and actionability the seam derives", () => {
+    const snapshot = parseFleetSnapshot(fixture("fleet-snapshot.v1.json"));
+
+    const held = snapshot.backlog.records
+      .filter(isStructuredBacklogRecord)
+      .find((record) => record.id === "webface-plan");
+    expect(held?.state).toBe("queued");
+    expect(held?.current_role).toBe("queued");
+    expect(held?.captain_actionable).toBe(true);
   });
 
   it("parses an unstructured backlog line, which carries no parsed fields", () => {
@@ -107,22 +132,23 @@ describe("parseFleetSnapshot", () => {
     [
       "captain_actionable carrying a string instead of a boolean",
       (snapshot: Record<string, unknown>) => {
-        const backlog = snapshot.backlog as { records: Record<string, unknown>[] };
-        backlog.records[1]!.captain_actionable = "true";
+        structuredRow(snapshot, "webface-plan").captain_actionable = "true";
       },
     ],
     [
       "open_decisions carrying bare strings instead of keyed records",
       (snapshot: Record<string, unknown>) => {
-        const tasks = snapshot.tasks as { hints: Record<string, unknown> }[];
-        tasks[0]!.hints.open_decisions = ["api-shape"];
+        decidingTask(snapshot).hints.open_decisions = ["api-shape"];
       },
     ],
     [
       "an open decision carrying note where the seam emits summary",
       (snapshot: Record<string, unknown>) => {
-        const tasks = snapshot.tasks as { hints: { open_decisions: Record<string, unknown>[] } }[];
-        const decision = tasks[0]!.hints.open_decisions[0]!;
+        const decisions = decidingTask(snapshot).hints.open_decisions as Record<
+          string,
+          unknown
+        >[];
+        const decision = decisions[0]!;
         decision.note = decision.summary;
         delete decision.summary;
       },
@@ -131,7 +157,7 @@ describe("parseFleetSnapshot", () => {
       "a row claiming to be structured without the fields a structured row carries",
       (snapshot: Record<string, unknown>) => {
         const backlog = snapshot.backlog as { records: Record<string, unknown>[] };
-        backlog.records[2]!.structured = true;
+        backlog.records.find((record) => record.structured === false)!.structured = true;
       },
     ],
     [
