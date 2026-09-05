@@ -2,14 +2,21 @@
  * Contract tests for the Herdr wire shapes, over recorded protocol-20 records.
  * Hermetic: no Herdr server is contacted.
  */
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
 import {
   HERDR_MIN_PROTOCOL,
   herdrAgentSchema,
   herdrPaneSchema,
   parseHerdrEvent,
   parseTerminalRecord,
+  subscribeEvents,
+  type HerdrEvent,
 } from "@/lib/herdr";
 
 const AGENT_SESSION = {
@@ -149,13 +156,109 @@ describe("events.subscribe stream", () => {
     ).toBeNull();
   });
 
-  it("ignores a modelled event whose payload has drifted rather than trusting it", () => {
-    expect(
+  it("throws on a modelled event whose payload has drifted, rather than going quiet", () => {
+    expect(() =>
       parseHerdrEvent('{"event":"pane_closed","data":{"type":"pane_closed","pane_id":"w1:p3"}}'),
-    ).toBeNull();
+    ).toThrow(/pane_closed/);
   });
 
   it("is pinned to the protocol helm was written against", () => {
     expect(HERDR_MIN_PROTOCOL).toBe(20);
+  });
+});
+
+describe("subscribeEvents", () => {
+  let socketDir: string;
+  let server: Server;
+  let socketPath: string;
+  /** Lines the stub server writes once a subscription arrives. */
+  let scripted: string[];
+
+  function config(): HelmConfig {
+    return {
+      fmHome: "/fixture/firstmate",
+      fmBinDir: "/fixture/firstmate/bin",
+      fmStateDir: "/fixture/firstmate/state",
+      herdrSocketPath: socketPath,
+      herdrBin: "herdr",
+      port: DEFAULT_PORT,
+      bind: DEFAULT_BIND,
+    };
+  }
+
+  beforeEach(async () => {
+    socketDir = mkdtempSync(join(tmpdir(), "helm-herdr-"));
+    socketPath = join(socketDir, "herdr.sock");
+    scripted = [];
+    server = createServer((connection) => {
+      connection.setEncoding("utf8");
+      connection.once("data", () => {
+        connection.write(`${JSON.stringify({ result: { type: "subscription_started" } })}\n`);
+        for (const line of scripted) connection.write(`${line}\n`);
+      });
+      connection.on("error", () => undefined);
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(socketDir, { recursive: true, force: true });
+  });
+
+  it("delivers a modelled event", async () => {
+    scripted = [
+      JSON.stringify({
+        event: "pane_closed",
+        data: { type: "pane_closed", pane_id: "w1:p3", workspace_id: "w1" },
+      }),
+    ];
+    const received: HerdrEvent[] = [];
+    const stream = subscribeEvents(config(), [{ type: "pane.closed" }], (event) => {
+      received.push(event);
+    });
+
+    await stream.ready;
+    await vi.waitUntil(() => received.length > 0);
+    stream.close();
+    await stream.closed.catch(() => undefined);
+
+    expect(received[0]?.event).toBe("pane_closed");
+  });
+
+  it("keeps the stream alive across an event kind helm does not model", async () => {
+    scripted = [
+      JSON.stringify({ event: "layout_updated", data: { type: "layout_updated" } }),
+      JSON.stringify({
+        event: "pane_closed",
+        data: { type: "pane_closed", pane_id: "w1:p3", workspace_id: "w1" },
+      }),
+    ];
+    const received: HerdrEvent[] = [];
+    const stream = subscribeEvents(config(), [{ type: "pane.closed" }], (event) => {
+      received.push(event);
+    });
+
+    await stream.ready;
+    await vi.waitUntil(() => received.length > 0);
+    stream.close();
+    await stream.closed.catch(() => undefined);
+
+    expect(received.map((event) => event.event)).toEqual(["pane_closed"]);
+  });
+
+  it("tears the stream down and reports a drifted payload on a modelled kind", async () => {
+    scripted = [
+      JSON.stringify({ event: "pane_closed", data: { type: "pane_closed", pane_id: "w1:p3" } }),
+    ];
+    const received: HerdrEvent[] = [];
+    const stream = subscribeEvents(config(), [{ type: "pane.closed" }], (event) => {
+      received.push(event);
+    });
+
+    await stream.ready;
+
+    await expect(stream.closed).rejects.toThrow(/pane_closed/);
+    expect(received).toEqual([]);
   });
 });

@@ -27,7 +27,7 @@ responder, the UI, and the service wrapper are later lanes.
 
 ## Configuration
 
-All four values are environment-driven. Bind address and port are config, not constants, so remote
+All five values are environment-driven. Bind address and port are config, not constants, so remote
 access later is a config swap rather than a code change.
 
 | Variable | Default | Meaning |

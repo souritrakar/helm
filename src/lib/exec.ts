@@ -23,6 +23,12 @@ export interface ExecResult {
    * `null` when the process ran to completion, whatever its exit code.
    */
   readonly error: string | null;
+  /**
+   * Failure writing `input` to the child's stdin — EPIPE when the child exited
+   * before draining it. Captured here rather than left to surface as an
+   * unhandled stream `error` event, which would terminate the whole process.
+   */
+  readonly stdinError: string | null;
 }
 
 export interface RunArgvOptions {
@@ -62,6 +68,7 @@ export function runArgv(
 ): Promise<ExecResult> {
   const argv = [file, ...args];
   return new Promise<ExecResult>((resolve) => {
+    let stdinError: string | null = null;
     const child = execFile(
       file,
       [...args],
@@ -85,13 +92,28 @@ export function runArgv(
           stdout,
           stderr,
           error: error !== null && exitCode === null ? error.message : null,
+          stdinError,
         });
       },
     );
     if (options.input !== undefined) {
-      child.stdin?.end(options.input);
+      const stdin = child.stdin;
+      stdin?.on("error", (cause: Error) => {
+        stdinError ??= cause.message;
+      });
+      stdin?.end(options.input);
     }
   });
+}
+
+/**
+ * Did the command run to completion with everything the caller asked for?
+ *
+ * A clean exit is not enough when `input` never reached the child: the work the
+ * input described did not happen.
+ */
+export function succeeded(result: ExecResult): boolean {
+  return result.exitCode === 0 && result.stdinError === null;
 }
 
 /** Run `file`, throwing {@link ExecFailure} unless it exits 0. */
@@ -101,7 +123,7 @@ export async function runArgvOrThrow(
   options: RunArgvOptions = {},
 ): Promise<ExecResult> {
   const result = await runArgv(file, args, options);
-  if (result.exitCode === 0) return result;
+  if (succeeded(result)) return result;
   throw new ExecFailure(describeFailure(result), result);
 }
 
@@ -109,9 +131,11 @@ export async function runArgvOrThrow(
 export function describeFailure(result: ExecResult): string {
   const command = result.argv[0] ?? "(no command)";
   const detail = firstLine(result.stderr) ?? firstLine(result.stdout) ?? "no output";
-  if (result.error !== null) return `${command}: ${result.error}`;
-  if (result.signal !== null) return `${command}: killed by ${result.signal}: ${detail}`;
-  return `${command}: exited ${result.exitCode}: ${detail}`;
+  const stdin = result.stdinError === null ? "" : ` (stdin: ${result.stdinError})`;
+  if (result.error !== null) return `${command}: ${result.error}${stdin}`;
+  if (result.signal !== null) return `${command}: killed by ${result.signal}: ${detail}${stdin}`;
+  if (result.exitCode === 0) return `${command}: could not write stdin: ${result.stdinError}`;
+  return `${command}: exited ${result.exitCode}: ${detail}${stdin}`;
 }
 
 function firstLine(text: string): string | null {

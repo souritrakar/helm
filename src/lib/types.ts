@@ -55,7 +55,7 @@ export interface InboxOption {
 /** Where an answer to this item goes. */
 export interface InboxRespondSpec {
   readonly channel: RespondChannel;
-  /** Task selector or pane id, depending on `channel`. */
+  /** Task id or pane id, depending on `channel`. */
   readonly target?: string;
   /** Decision key, taken verbatim from the fold that produced the card. */
   readonly key?: string;

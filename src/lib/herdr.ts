@@ -329,10 +329,37 @@ export const herdrEventSchema = z.discriminatedUnion("event", [
 ]);
 export type HerdrEvent = z.infer<typeof herdrEventSchema>;
 
-/** Parse one line from the event stream, or `null` if helm does not model it. */
+/** The wire names helm models. Anything else is another Herdr feature's event. */
+const MODELLED_EVENT_NAMES: ReadonlySet<string> = new Set(
+  herdrEventSchema.options.map((option) => option.shape.event.value),
+);
+
+const eventEnvelopeSchema = z.object({ event: z.string() });
+
+/**
+ * Parse one line from the event stream.
+ *
+ * Discriminates on the event NAME first. A name helm does not model returns
+ * `null`, so a Herdr upgrade that adds event kinds cannot break the stream. A
+ * name helm DOES model whose payload has drifted throws: a silent drop would
+ * leave the status stream permanently quiet with nothing reporting it
+ * (SPEC R2/R3 — a contract drift must fail loudly, never mis-parse).
+ */
 export function parseHerdrEvent(line: string): HerdrEvent | null {
-  const parsed = herdrEventSchema.safeParse(parseJson(line, "herdr event"));
-  return parsed.success ? parsed.data : null;
+  const raw = parseJson(line, "herdr event");
+  const envelope = eventEnvelopeSchema.safeParse(raw);
+  if (!envelope.success || !MODELLED_EVENT_NAMES.has(envelope.data.event)) return null;
+  const parsed = herdrEventSchema.safeParse(raw);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .slice(0, 5)
+      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(
+      `herdr event ${envelope.data.event} does not match the contract helm reads: ${issues}`,
+    );
+  }
+  return parsed.data;
 }
 
 export interface HerdrEventStream {
@@ -350,8 +377,10 @@ const subscribeAckSchema = z.object({
 /**
  * Open one control-socket connection and subscribe to `subscriptions`.
  *
- * `onEvent` is called for each event helm models; lines for anything else are
- * ignored, so a Herdr upgrade that adds event kinds cannot break the stream.
+ * `onEvent` is called for each event helm models. A line naming an event kind
+ * helm does not model is ignored, so a Herdr upgrade that adds kinds cannot
+ * break the stream; a drifted payload on a kind helm DOES model closes the
+ * stream and rejects {@link HerdrEventStream.closed}.
  */
 export function subscribeEvents(
   cfg: HelmConfig,
@@ -403,7 +432,15 @@ export function subscribeEvents(
         acknowledge();
         return;
       }
-      const event = parseHerdrEvent(line);
+      let event: HerdrEvent | null;
+      try {
+        event = parseHerdrEvent(line);
+      } catch (cause) {
+        // A drifted payload on a modelled event tears the subscription down and
+        // reaches the caller. Swallowing it here is what leaves a stream quiet.
+        fail(errorMessage(cause));
+        return;
+      }
       if (event !== null) onEvent(event);
     });
 

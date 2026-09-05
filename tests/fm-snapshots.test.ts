@@ -9,7 +9,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { FmContractError, parseBearingsSnapshot, parseFleetSnapshot } from "@/lib/fm";
+import {
+  FmContractError,
+  isStructuredBacklogRecord,
+  parseBearingsSnapshot,
+  parseFleetSnapshot,
+} from "@/lib/fm";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
@@ -37,7 +42,9 @@ describe("parseFleetSnapshot", () => {
   it("reads the captain-actionable backlog row the inbox binds to", () => {
     const snapshot = parseFleetSnapshot(fixture("fleet-snapshot.v1.json"));
 
-    const actionable = snapshot.backlog.records.filter((record) => record.captain_actionable);
+    const actionable = snapshot.backlog.records
+      .filter(isStructuredBacklogRecord)
+      .filter((record) => record.captain_actionable);
     expect(actionable).toHaveLength(1);
     expect(actionable[0]?.id).toBe("webface-plan");
     expect(actionable[0]?.hold_kind).toBe("captain");
@@ -53,6 +60,27 @@ describe("parseFleetSnapshot", () => {
     ]);
     expect(task?.actions.steer).toBe("bin/fm-send.sh fm-helm-foundation '<instruction>'");
     expect(task?.endpoint.target).toBe("default:w2:p2");
+  });
+
+  it("parses a secondmate task, whose actions carry send instead of steer", () => {
+    const snapshot = parseFleetSnapshot(fixture("fleet-snapshot.v1.json"));
+
+    const secondmate = snapshot.tasks.find((task) => task.kind === "secondmate");
+    expect(secondmate?.id).toBe("fleet-scout");
+    expect(secondmate?.actions.steer ?? null).toBeNull();
+    expect(secondmate?.actions.send).toBe("bin/fm-send.sh fm-fleet-scout '<request>'");
+  });
+
+  it("parses an unstructured backlog line, which carries no parsed fields", () => {
+    const snapshot = parseFleetSnapshot(fixture("fleet-snapshot.v1.json"));
+
+    const unstructured = snapshot.backlog.records.filter(
+      (record) => !isStructuredBacklogRecord(record),
+    );
+    expect(unstructured).toHaveLength(1);
+    expect(unstructured[0]?.raw).toContain("responder routing policy");
+    expect(unstructured[0]?.id).toBeNull();
+    expect(snapshot.main_inventory.unstructured_current_count).toBe(1);
   });
 
   it("tolerates fields helm does not read, so firstmate can add them", () => {
@@ -88,6 +116,13 @@ describe("parseFleetSnapshot", () => {
       (snapshot: Record<string, unknown>) => {
         const tasks = snapshot.tasks as { hints: Record<string, unknown> }[];
         tasks[0]!.hints.open_decisions = ["api-shape"];
+      },
+    ],
+    [
+      "a row claiming to be structured without the fields a structured row carries",
+      (snapshot: Record<string, unknown>) => {
+        const backlog = snapshot.backlog as { records: Record<string, unknown>[] };
+        backlog.records[2]!.structured = true;
       },
     ],
     [

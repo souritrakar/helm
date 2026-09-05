@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { HelmConfig } from "./config";
-import { describeFailure, runArgv, type ExecResult } from "./exec";
+import { describeFailure, runArgv, succeeded, type ExecResult } from "./exec";
 import type { RespondChannel, RespondCloseMode, RespondResult } from "./types";
 
 /** Thrown when a firstmate seam fails or returns a shape helm cannot trust. */
@@ -37,18 +37,22 @@ export class FmContractError extends Error {
 // fm-fleet-snapshot.sh --json  (schema fm-fleet-snapshot.v1)
 // ---------------------------------------------------------------------------
 
+const backlogRowSchema = z.object({
+  order: z.number().int(),
+  state: z.string(),
+  raw: z.string(),
+});
+
 /**
- * A backlog row.
+ * A parsed backlog row.
  *
  * `captain_actionable` means "waiting on the captain now": queued, held for the
  * captain, unblocked, and due. `deferred_marker` is a presentation hint only —
  * it never changes actionability.
  */
-export const backlogRecordSchema = z.object({
-  order: z.number().int(),
-  state: z.string(),
-  structured: z.boolean(),
-  id: z.string().nullable(),
+export const structuredBacklogRecordSchema = backlogRowSchema.extend({
+  structured: z.literal(true),
+  id: z.string(),
   title: z.string().nullable(),
   repo: z.string().nullable(),
   kind: z.string().nullable(),
@@ -61,9 +65,33 @@ export const backlogRecordSchema = z.object({
   captain_actionable: z.boolean(),
   deferred_marker: z.boolean(),
   pr_url: z.string().nullable(),
-  raw: z.string(),
 });
+export type StructuredBacklogRecord = z.infer<typeof structuredBacklogRecordSchema>;
+
+/**
+ * A free-text backlog line. firstmate keeps it — and counts it in
+ * `main_inventory.unstructured_current_count` — but parses no fields out of it,
+ * so nothing beyond `raw` exists to read.
+ */
+export const unstructuredBacklogRecordSchema = backlogRowSchema.extend({
+  structured: z.literal(false),
+  id: z.null(),
+});
+export type UnstructuredBacklogRecord = z.infer<typeof unstructuredBacklogRecordSchema>;
+
+/** A backlog row, discriminated by whether firstmate could parse its fields. */
+export const backlogRecordSchema = z.discriminatedUnion("structured", [
+  structuredBacklogRecordSchema,
+  unstructuredBacklogRecordSchema,
+]);
 export type BacklogRecord = z.infer<typeof backlogRecordSchema>;
+
+/** Narrow a backlog row to the variant that carries the parsed task fields. */
+export function isStructuredBacklogRecord(
+  record: BacklogRecord,
+): record is StructuredBacklogRecord {
+  return record.structured;
+}
 
 /** A still-open keyed decision, as the snapshot reports it per task. */
 export const snapshotOpenDecisionSchema = z.object({
@@ -102,14 +130,19 @@ export const fleetTaskSchema = z.object({
     blocked_event: z.boolean(),
     open_decisions: z.array(snapshotOpenDecisionSchema),
   }),
+  /**
+   * The commands firstmate suggests for this task, as display and provenance
+   * text. They are whole command lines with placeholders, not send targets —
+   * helm addresses a task by its {@link FleetTask.id} (see {@link sendResolveKey}).
+   *
+   * Which keys are present depends on `kind`: a secondmate task carries `send`,
+   * every other kind carries `steer`.
+   */
   actions: z.object({
-    /**
-     * The exact `fm-send.sh` invocation firstmate reports for this task. helm
-     * takes its send target from here rather than deriving one: mapping a key
-     * or an id to a task selector is identity arithmetic helm must not do.
-     */
-    steer: z.string().nullable(),
+    steer: z.string().nullish(),
+    send: z.string().nullish(),
     watch: z.string().nullable(),
+    return_channel_note: z.string().nullish(),
   }),
   backlog: backlogRecordSchema.nullish(),
 });
@@ -286,17 +319,18 @@ const DECISION_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export interface SendResolveKeyRequest {
   /**
-   * The task selector, taken verbatim from the snapshot's `actions.steer`. helm
-   * does not construct it.
+   * The task id, taken verbatim from {@link FleetTask.id} or
+   * {@link OpenDecision.taskId}. `fm-send.sh` resolves an exact task id itself,
+   * so helm derives, prefixes, and decomposes nothing.
    */
-  readonly target: string;
+  readonly taskId: string;
   /** The decision key, taken verbatim from the fold that produced the card. */
   readonly key: string;
   readonly answer: string;
 }
 
 /**
- * Answer a keyed status decision: `fm-send.sh <target> --resolve-key <key> <answer>`.
+ * Answer a keyed status decision: `fm-send.sh <task-id> --resolve-key <key> <answer>`.
  *
  * `fm-send.sh` appends the closing `resolved [key=…]` line itself and feeds the
  * one keyed-answer intake. helm closes nothing and records nothing.
@@ -305,7 +339,7 @@ export async function sendResolveKey(
   cfg: HelmConfig,
   request: SendResolveKeyRequest,
 ): Promise<RespondResult> {
-  requireField("target", request.target);
+  requireSingleLineField("taskId", request.taskId);
   requireField("answer", request.answer);
   if (!DECISION_KEY_PATTERN.test(request.key)) {
     throw new FmContractError(
@@ -313,7 +347,7 @@ export async function sendResolveKey(
     );
   }
   const result = await runArgv(join(cfg.fmBinDir, "fm-send.sh"), [
-    request.target,
+    request.taskId,
     "--resolve-key",
     request.key,
     request.answer,
@@ -346,11 +380,19 @@ export interface CaptainHoldAnswer {
 export async function captainHoldAnswers(
   cfg: HelmConfig,
   answers: readonly CaptainHoldAnswer[],
-  options: { readonly source?: string } = {},
+  options: {
+    /**
+     * Provenance recorded in the durable decision. `fm-captain-hold.sh` refuses
+     * to read a single answer without it, so helm requires it too rather than
+     * discovering the refusal after the pipe.
+     */
+    readonly source: string;
+  },
 ): Promise<RespondResult> {
   if (answers.length === 0) {
     throw new FmContractError("captainHoldAnswers: at least one answer is required");
   }
+  requireSingleLineField("source", options.source);
   const lines = answers.map((answer) => {
     // A tab or newline in any field would forge extra intake lines.
     requireSingleLineField("taskId", answer.taskId);
@@ -360,10 +402,11 @@ export async function captainHoldAnswers(
     if (answer.close !== undefined) fields.push(answer.close);
     return fields.join("\t");
   });
-  const args = options.source === undefined ? ["answers"] : ["answers", "--source", options.source];
-  const result = await runArgv(join(cfg.fmBinDir, "fm-captain-hold.sh"), args, {
-    input: `${lines.join("\n")}\n`,
-  });
+  const result = await runArgv(
+    join(cfg.fmBinDir, "fm-captain-hold.sh"),
+    ["answers", "--source", options.source],
+    { input: `${lines.join("\n")}\n` },
+  );
   return toRespondResult("captain-hold", result);
 }
 
@@ -428,7 +471,7 @@ function toRespondResult(channel: RespondChannel, result: ExecResult): RespondRe
     stderr: result.stderr,
     at: new Date().toISOString(),
   };
-  return result.exitCode === 0
+  return succeeded(result)
     ? { ...attempt, ok: true }
     : { ...attempt, ok: false, error: describeFailure(result) };
 }

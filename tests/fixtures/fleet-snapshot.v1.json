@@ -33,7 +33,10 @@
         "merged": null,
         "reported": null,
         "done": null,
-        "completion": { "verb": null, "date": null },
+        "completion": {
+          "verb": null,
+          "date": null
+        },
         "links": [],
         "pr_url": null,
         "report_path": null,
@@ -67,7 +70,10 @@
         "merged": null,
         "reported": null,
         "done": null,
-        "completion": { "verb": null, "date": null },
+        "completion": {
+          "verb": null,
+          "date": null
+        },
         "links": [],
         "pr_url": null,
         "report_path": "data/webface-plan/report.md",
@@ -80,6 +86,15 @@
         "requires_child_metadata": false,
         "captain_actionable": true,
         "deferred_marker": false
+      },
+      {
+        "order": 3,
+        "state": "queued",
+        "structured": false,
+        "id": null,
+        "raw": "- captain: decide the responder routing policy before Lane C",
+        "body_lines": [],
+        "body_excerpt": null
       }
     ]
   },
@@ -95,16 +110,32 @@
       "backend": "herdr",
       "remote": null,
       "paths": {
-        "meta": { "path": "/fixture/firstmate/state/helm-foundation.meta", "present": true },
+        "meta": {
+          "path": "/fixture/firstmate/state/helm-foundation.meta",
+          "present": true
+        },
         "status_log": {
           "path": "/fixture/firstmate/state/helm-foundation.status",
           "present": true,
           "kind": "event_history",
-          "last_event": { "state": "working", "note": "scaffold up", "raw": "working: scaffold up" }
+          "last_event": {
+            "state": "working",
+            "note": "scaffold up",
+            "raw": "working: scaffold up"
+          }
         },
-        "worktree": { "path": "/fixture/worktree/helm", "present": true },
-        "home": { "path": null, "present": false },
-        "report": { "path": "/fixture/firstmate/data/helm-foundation/report.md", "present": false }
+        "worktree": {
+          "path": "/fixture/worktree/helm",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/fixture/firstmate/data/helm-foundation/report.md",
+          "present": false
+        }
       },
       "secondmate_projects": [],
       "current_state": {
@@ -123,12 +154,19 @@
         "observed_at": "2026-09-04T23:56:43Z",
         "freshness": "fresh"
       },
-      "pr": { "url": null, "source": "absent" },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
       "hints": {
         "pending_decision": true,
         "blocked_event": false,
         "open_decisions": [
-          { "key": "api-shape", "verb": "needs-decision", "note": "A or B?" }
+          {
+            "key": "api-shape",
+            "verb": "needs-decision",
+            "note": "A or B?"
+          }
         ],
         "scout_report_present": false,
         "last_event_text": "working: scaffold up"
@@ -158,7 +196,10 @@
         "merged": null,
         "reported": null,
         "done": null,
-        "completion": { "verb": null, "date": null },
+        "completion": {
+          "verb": null,
+          "date": null
+        },
         "links": [],
         "pr_url": null,
         "report_path": null,
@@ -172,17 +213,93 @@
         "captain_actionable": false,
         "deferred_marker": false
       }
+    },
+    {
+      "id": "fleet-scout",
+      "kind": "secondmate",
+      "harness": "claude",
+      "mode": "local-only",
+      "yolo": "off",
+      "project": null,
+      "spawn_gen": "s1788566171.146855.23483",
+      "backend": "herdr",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/fixture/firstmate/state/fleet-scout.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/fixture/firstmate/state/fleet-scout.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "reading the spec",
+            "raw": "working: reading the spec"
+          }
+        },
+        "worktree": {
+          "path": null,
+          "present": false
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/fixture/firstmate/data/fleet-scout/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "working",
+        "source": "pane",
+        "detail": "harness busy (claude-hook)",
+        "raw": "state: working · source: pane · harness busy (claude-hook)",
+        "observed_at": "2026-09-04T23:56:43Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "default:w3:p1",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-04T23:56:43Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: reading the spec"
+      },
+      "actions": {
+        "send": "bin/fm-send.sh fm-fleet-scout '<request>'",
+        "watch": "read status/doc return channel; do not routinely fm-peek a secondmate for answers",
+        "return_channel_note": "Secondmate answers come back through status/doc paths after a marked fm-send request."
+      },
+      "backlog": null
     }
   ],
   "main_inventory": {
     "valid": true,
     "reason": null,
     "orphan_in_flight": [],
-    "unstructured_current_count": 0
+    "unstructured_current_count": 1
   },
   "scout_reports": [],
   "secondmate_current": {
-    "registry": { "available": true, "reason": null },
+    "registry": {
+      "available": true,
+      "reason": null
+    },
     "records": [],
     "total_registered": 0,
     "total": 0,

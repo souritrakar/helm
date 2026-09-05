@@ -37,6 +37,13 @@ function findFirstmateBin(): string | null {
 
 const firstmateBin = findFirstmateBin();
 
+/**
+ * Explicit local-dev opt-out. Absence of the library is otherwise a FAILURE,
+ * never a skip: this suite is the only proof of AGENTS.md hard rule 2, and a
+ * silent skip would let a green `pnpm test` mean nothing.
+ */
+const skipContract = process.env.HELM_SKIP_FM_CONTRACT === "1";
+
 describe("parseOpenDecisionLines", () => {
   it("splits only the first three tabs, so a note may contain tabs", () => {
     const decisions = parseOpenDecisionLines(
@@ -57,15 +64,22 @@ describe("parseOpenDecisionLines", () => {
   });
 });
 
-describe.skipIf(firstmateBin === null)("scanOpenDecisions against the real classify library", () => {
-  let home: string;
+describe.skipIf(skipContract)("scanOpenDecisions against the real classify library", () => {
+  let home = "";
   let config: HelmConfig;
 
   beforeAll(() => {
+    if (firstmateBin === null) {
+      throw new Error(
+        "no firstmate bin/fm-classify-lib.sh found under HELM_TEST_FM_HOME, FM_HOME, or ~/firstmate; " +
+          "the fold contract cannot be proven. Point HELM_TEST_FM_HOME at a firstmate checkout, " +
+          "or set HELM_SKIP_FM_CONTRACT=1 to opt out deliberately.",
+      );
+    }
     home = mkdtempSync(join(tmpdir(), "helm-fold-"));
     // Symlink the whole bin directory: the library sources a sibling relative to
     // its own location, so a per-file symlink would break that resolution.
-    symlinkSync(firstmateBin!, join(home, "bin"), "dir");
+    symlinkSync(firstmateBin, join(home, "bin"), "dir");
     const state = join(home, "state");
     mkdirSync(state);
     for (const name of [
@@ -79,7 +93,7 @@ describe.skipIf(firstmateBin === null)("scanOpenDecisions against the real class
   });
 
   afterAll(() => {
-    rmSync(home, { recursive: true, force: true });
+    if (home !== "") rmSync(home, { recursive: true, force: true });
   });
 
   it("keeps a decision open behind a later, unrelated done: line", async () => {
@@ -114,9 +128,3 @@ describe.skipIf(firstmateBin === null)("scanOpenDecisions against the real class
     expect(decisions).toHaveLength(1);
   });
 });
-
-if (firstmateBin === null) {
-  console.warn(
-    "fm-fold.test.ts: no firstmate bin/fm-classify-lib.sh found; set HELM_TEST_FM_HOME to run the fold contract tests",
-  );
-}
