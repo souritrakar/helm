@@ -2,10 +2,15 @@
  * Boundary tests for the answer seams.
  *
  * helm is a channel, not an authority: it rejects anything it cannot pass on
- * verbatim BEFORE spawning a script. Every case here throws before any exec, so
- * the suite is hermetic and touches no `$FM_HOME`.
+ * verbatim BEFORE spawning a script, and it never reports an answer as recorded
+ * that the intake did not close. Hermetic — the boundary cases throw before any
+ * exec, and the reconciliation cases run a stand-in intake in a temp directory,
+ * so no case touches a real `$FM_HOME`.
  */
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
 import { FmContractError, captainHoldAnswers, sendResolveKey } from "@/lib/fm";
@@ -76,6 +81,36 @@ describe("captainHoldAnswers", () => {
   });
 
   it.each([
+    ["outside the intake alphabet", "webface plan"],
+    ["a slash the intake alphabet excludes", "webface/plan"],
+    ["longer than the intake's 128-character limit", "w".repeat(129)],
+  ])("rejects a taskId that is %s, which the intake drops without a word", async (_case, taskId) => {
+    await expect(
+      captainHoldAnswers(CONFIG, [{ ...answer, taskId }], { source: "helm" }),
+    ).rejects.toThrow(FmContractError);
+  });
+
+  it("accepts a taskId exactly at the intake's 128-character limit", async () => {
+    const result = await captainHoldAnswers(
+      CONFIG,
+      [{ ...answer, taskId: "w".repeat(128) }],
+      { source: "helm" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.argv[0]).toBe("/fixture/firstmate/bin/fm-captain-hold.sh");
+  });
+
+  it.each([
+    ["only control characters", "\u0001\u0002"],
+    ["a lone DEL", "\u007f"],
+  ])("rejects an answer of %s, which sanitizes to nothing at the intake", async (_case, text) => {
+    await expect(
+      captainHoldAnswers(CONFIG, [{ ...answer, answer: text }], { source: "helm" }),
+    ).rejects.toThrow(/no content the intake would keep/);
+  });
+
+  it.each([
     ["taskId", { ...answer, taskId: "webface\tplan" }],
     ["answer", { ...answer, answer: "option-a\nforged\tline" }],
     ["label", { ...answer, label: "captain\tvia helm" }],
@@ -83,5 +118,75 @@ describe("captainHoldAnswers", () => {
     await expect(captainHoldAnswers(CONFIG, [forged], { source: "helm" })).rejects.toThrow(
       FmContractError,
     );
+  });
+});
+
+/**
+ * `fm-captain-hold.sh answers` drops an unusable row without a word and without
+ * counting it as skipped, then exits 0. These run a stand-in that reproduces
+ * that closing tally, so helm's reconciliation is exercised end to end.
+ */
+describe("captainHoldAnswers reconciliation", () => {
+  let binDir: string;
+
+  function stubIntake(body: string): HelmConfig {
+    writeFileSync(join(binDir, "fm-captain-hold.sh"), `#!/bin/sh\ncat >/dev/null\n${body}\n`, {
+      mode: 0o755,
+    });
+    return { ...CONFIG, fmBinDir: binDir };
+  }
+
+  const ANSWERS = [
+    { taskId: "webface-plan", answer: "option-a", label: "captain" },
+    { taskId: "helm-foundation", answer: "option-b", label: "captain" },
+  ];
+
+  beforeEach(() => {
+    binDir = mkdtempSync(join(tmpdir(), "helm-intake-"));
+  });
+
+  afterEach(() => {
+    rmSync(binDir, { recursive: true, force: true });
+  });
+
+  it("reports success when the intake closes every answer submitted", async () => {
+    const result = await captainHoldAnswers(
+      stubIntake("printf 'answers: closed=2 skipped=0\\n'"),
+      ANSWERS,
+      { source: "helm" },
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails when the intake exits 0 having closed nothing", async () => {
+    const result = await captainHoldAnswers(
+      stubIntake("printf 'answers: closed=0 skipped=0\\n'"),
+      ANSWERS,
+      { source: "helm" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/recorded 0 of 2 submitted answer/);
+  });
+
+  it("fails when the intake closes only some of the answers submitted", async () => {
+    const result = await captainHoldAnswers(
+      stubIntake("printf 'closed: webface-plan\\nanswers: closed=1 skipped=0\\n'"),
+      ANSWERS,
+      { source: "helm" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/recorded 1 of 2 submitted answer/);
+  });
+
+  it("fails when the intake exits 0 without printing its tally at all", async () => {
+    const result = await captainHoldAnswers(stubIntake("printf 'done\\n'"), ANSWERS, {
+      source: "helm",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/without its "answers: closed/);
   });
 });

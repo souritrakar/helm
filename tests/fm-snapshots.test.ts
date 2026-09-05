@@ -56,7 +56,7 @@ describe("parseFleetSnapshot", () => {
     const task = snapshot.tasks[0];
 
     expect(task?.hints.open_decisions).toEqual([
-      { key: "api-shape", verb: "needs-decision", note: "A or B?" },
+      { key: "api-shape", verb: "needs-decision", summary: "A or B?" },
     ]);
     expect(task?.actions.steer).toBe("bin/fm-send.sh fm-helm-foundation '<instruction>'");
     expect(task?.endpoint.target).toBe("default:w2:p2");
@@ -116,6 +116,15 @@ describe("parseFleetSnapshot", () => {
       (snapshot: Record<string, unknown>) => {
         const tasks = snapshot.tasks as { hints: Record<string, unknown> }[];
         tasks[0]!.hints.open_decisions = ["api-shape"];
+      },
+    ],
+    [
+      "an open decision carrying note where the seam emits summary",
+      (snapshot: Record<string, unknown>) => {
+        const tasks = snapshot.tasks as { hints: { open_decisions: Record<string, unknown>[] } }[];
+        const decision = tasks[0]!.hints.open_decisions[0]!;
+        decision.note = decision.summary;
+        delete decision.summary;
       },
     ],
     [

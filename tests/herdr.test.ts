@@ -115,6 +115,13 @@ describe("discovery shapes", () => {
     expect(agent.agent_status).toBe("working");
   });
 
+  it("parses an agent record whose agent is null, which protocol 20 allows", () => {
+    const agent = herdrAgentSchema.parse({ ...PANE, agent: null, state_change_seq: 4 });
+
+    expect(agent.agent).toBeNull();
+    expect(agent.pane_id).toBe("w1:p1");
+  });
+
   it("rejects an agent status outside the protocol enum", () => {
     expect(() => herdrAgentSchema.parse({ ...PANE, agent_status: "busy" })).toThrow();
   });

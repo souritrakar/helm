@@ -165,7 +165,7 @@
           {
             "key": "api-shape",
             "verb": "needs-decision",
-            "note": "A or B?"
+            "summary": "A or B?"
           }
         ],
         "scout_report_present": false,

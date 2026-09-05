@@ -238,13 +238,20 @@ export const herdrPaneSchema = z.object({
 });
 export type HerdrPane = z.infer<typeof herdrPaneSchema>;
 
-/** An agent-bearing pane, as reported by `herdr agent list`. */
+/**
+ * A pane as reported by `herdr agent list`.
+ *
+ * `agent` follows protocol-20 `AgentInfo`, which types it `["string","null"]`
+ * and does not require it. helm models it exactly as {@link herdrPaneSchema}
+ * does over the same Herdr field: demanding more than the protocol promises
+ * would fail loudly on a response that is in fact valid.
+ */
 export const herdrAgentSchema = z.object({
   pane_id: z.string(),
   workspace_id: z.string(),
   tab_id: z.string(),
   terminal_id: z.string(),
-  agent: z.string(),
+  agent: z.string().nullish(),
   agent_status: agentStatusSchema,
   focused: z.boolean(),
   agent_session: agentSessionSchema.nullish(),

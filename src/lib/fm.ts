@@ -97,7 +97,7 @@ export function isStructuredBacklogRecord(
 export const snapshotOpenDecisionSchema = z.object({
   key: z.string(),
   verb: z.string(),
-  note: z.string(),
+  summary: z.string(),
 });
 
 export const fleetTaskSchema = z.object({
@@ -366,6 +366,24 @@ export async function sendResolveKey(
   return toRespondResult("resolve-key", result);
 }
 
+/**
+ * The intake's own key rules: `fm-captain-hold.sh` drops a row whose key falls
+ * outside this alphabet or exceeds this length, and it does so SILENTLY.
+ */
+const CAPTAIN_HOLD_KEY_MAX = 128;
+
+/**
+ * `sanitize_field` as `fm-captain-hold.sh` applies it: tab, newline, and
+ * carriage return become spaces, C0 controls and DEL are deleted.
+ *
+ * helm mirrors it only to predict an answer the intake would reduce to nothing
+ * and then drop without a word. It never rewrites the answer it sends.
+ */
+function sanitizesToEmpty(value: string): boolean {
+  const stripped = value.replace(/[\n\r\t]/g, " ").replace(/[\u0000-\u001f\u007f]/g, "");
+  return stripped === "";
+}
+
 /** One line for the keyed-answer intake. */
 export interface CaptainHoldAnswer {
   /** The key IS the task id. There is no identity arithmetic. */
@@ -409,6 +427,12 @@ export async function captainHoldAnswers(
     requireSingleLineField("taskId", answer.taskId);
     requireSingleLineField("answer", answer.answer);
     requireSingleLineField("label", answer.label);
+    requireIntakeKey(answer.taskId);
+    if (sanitizesToEmpty(answer.answer)) {
+      throw new FmContractError(
+        `answer for ${JSON.stringify(answer.taskId)} has no content the intake would keep; fm-captain-hold.sh strips control characters and then drops the row without a word`,
+      );
+    }
     const fields = [answer.taskId, answer.answer, answer.label];
     if (answer.close !== undefined) fields.push(answer.close);
     return fields.join("\t");
@@ -418,7 +442,45 @@ export async function captainHoldAnswers(
     ["answers", "--source", options.source],
     { input: `${lines.join("\n")}\n` },
   );
-  return toRespondResult("captain-hold", result);
+  const attempt = toRespondResult("captain-hold", result);
+  if (!attempt.ok) return attempt;
+  return reconcileCaptainHold(attempt, result.stdout, answers.length);
+}
+
+/** The intake's own closing tally: `answers: closed=<N> skipped=<M>`. */
+const CAPTAIN_HOLD_TALLY = /^answers: closed=(\d+) skipped=(\d+)$/m;
+
+/**
+ * Hold the intake to the count helm submitted.
+ *
+ * `fm-captain-hold.sh` drops an unusable row without a word and without
+ * counting it as skipped, so a batch that recorded nothing still exits 0. helm
+ * is the audit record for an answer (SPEC §5.5), so it must never report a
+ * decision as delivered on the strength of an exit code alone.
+ */
+function reconcileCaptainHold(
+  attempt: RespondResult & { readonly ok: true },
+  stdout: string,
+  submitted: number,
+): RespondResult {
+  const tally = CAPTAIN_HOLD_TALLY.exec(stdout);
+  if (tally === null) {
+    return {
+      ...attempt,
+      ok: false,
+      error: `fm-captain-hold.sh answers exited 0 without its "answers: closed=… skipped=…" tally, so helm cannot confirm ${submitted} answer(s) were recorded`,
+    };
+  }
+  const closed = Number(tally[1]);
+  const skipped = Number(tally[2]);
+  if (closed !== submitted) {
+    return {
+      ...attempt,
+      ok: false,
+      error: `fm-captain-hold.sh answers recorded ${closed} of ${submitted} submitted answer(s) (skipped=${skipped}); the rest were dropped without being closed`,
+    };
+  }
+  return attempt;
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +533,19 @@ function requireNotFmSendOption(answer: string): void {
         `answer ${JSON.stringify(answer)} would be read as fm-send.sh's ${option} option rather than as the message, and fm-send.sh has no -- terminator`,
       );
     }
+  }
+}
+
+function requireIntakeKey(taskId: string): void {
+  if (!DECISION_KEY_PATTERN.test(taskId)) {
+    throw new FmContractError(
+      `taskId ${JSON.stringify(taskId)} is not a valid intake key (allowed: A-Z a-z 0-9 . _ -); fm-captain-hold.sh would drop the row without a word`,
+    );
+  }
+  if (taskId.length > CAPTAIN_HOLD_KEY_MAX) {
+    throw new FmContractError(
+      `taskId ${JSON.stringify(taskId)} is ${taskId.length} characters; fm-captain-hold.sh silently drops a key over ${CAPTAIN_HOLD_KEY_MAX}`,
+    );
   }
 }
 
