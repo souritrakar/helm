@@ -1,0 +1,577 @@
+/**
+ * Typed wrappers over the Herdr CLI and control socket.
+ *
+ * This is the SINGLE place any Herdr access lives (SPEC R2), so a Herdr upgrade
+ * is a one-file change and `doctor` can assert the protocol helm was written
+ * against. Every exec is argv-only — no helper here builds a shell string.
+ *
+ * helm never drives Herdr lifecycle: it observes terminals, sends text, and
+ * reads. Nothing in this module starts, stops, restarts, or deletes a session,
+ * workspace, or pane.
+ *
+ * Shapes are taken from `herdr api schema --json` at protocol 20 and from
+ * observed CLI output on Herdr 0.8.2.
+ */
+import { spawn } from "node:child_process";
+import { connect, type Socket } from "node:net";
+import { createInterface } from "node:readline";
+import { statSync } from "node:fs";
+import { z } from "zod";
+
+import type { HelmConfig } from "./config";
+import { describeFailure, runArgv, type ExecResult } from "./exec";
+
+/**
+ * Minimum Herdr socket protocol helm is written against. The terminal-session
+ * observer and the `pane.*` subscription set below are protocol-20 shapes.
+ */
+export const HERDR_MIN_PROTOCOL = 20;
+
+// ---------------------------------------------------------------------------
+// Terminal bridge
+// ---------------------------------------------------------------------------
+
+/**
+ * One rendered terminal frame.
+ *
+ * `full: true` marks a complete repaint — the first frame of a stream always
+ * is, so a client that connects mid-session needs no replay logic. `seq` is
+ * monotonic, so a gap means frames were lost and the observer must be respawned
+ * to force a fresh repaint. `width`/`height` echo what this observer requested,
+ * not the pane's real geometry: the viewport is per-observer, which is why a
+ * browser tab cannot disturb another client's view.
+ */
+export const terminalFrameSchema = z.object({
+  type: z.literal("terminal.frame"),
+  seq: z.number().int().nonnegative(),
+  encoding: z.literal("ansi"),
+  /** Base64 ANSI bytes. Decode and write straight into a terminal emulator. */
+  bytes: z.string(),
+  full: z.boolean(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+export type TerminalFrame = z.infer<typeof terminalFrameSchema>;
+
+/** The server closed the terminal stream. */
+export const terminalClosedSchema = z.object({ type: z.literal("terminal.closed") });
+export type TerminalClosed = z.infer<typeof terminalClosedSchema>;
+
+export const terminalRecordSchema = z.discriminatedUnion("type", [
+  terminalFrameSchema,
+  terminalClosedSchema,
+]);
+export type TerminalRecord = z.infer<typeof terminalRecordSchema>;
+
+/** Parse one newline-delimited observer record. */
+export function parseTerminalRecord(line: string): TerminalRecord {
+  return terminalRecordSchema.parse(parseJson(line, "herdr terminal record"));
+}
+
+export interface TerminalViewport {
+  readonly cols: number;
+  readonly rows: number;
+}
+
+/** How an observer stream ended. */
+export interface TerminalObservationExit {
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  /** Non-null when the stream ended abnormally: spawn failure or a bad record. */
+  readonly error: string | null;
+}
+
+/**
+ * A live read-only terminal stream. Iterate it for records; `close()` stops the
+ * child; `exit` resolves once the stream has ended.
+ */
+export interface TerminalObservation extends AsyncIterable<TerminalRecord> {
+  readonly argv: readonly string[];
+  readonly exit: Promise<TerminalObservationExit>;
+  close(): void;
+}
+
+/**
+ * Spawn a read-only observer on `target` (a pane id such as `w1:p1`).
+ *
+ * Observing takes no input, resize, scroll, or takeover ownership, and any
+ * number of observers may watch the same terminal. The viewport is fixed at
+ * spawn, so a resize means closing this observation and opening another.
+ */
+export function observeTerminal(
+  cfg: HelmConfig,
+  target: string,
+  viewport: TerminalViewport,
+): TerminalObservation {
+  const args = [
+    "terminal",
+    "session",
+    "observe",
+    target,
+    "--cols",
+    String(viewport.cols),
+    "--rows",
+    String(viewport.rows),
+  ];
+  const argv = [cfg.herdrBin, ...args];
+  const child = spawn(cfg.herdrBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+
+  const queue = new RecordQueue<TerminalRecord>();
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+
+  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  lines.on("line", (line) => {
+    if (line.trim() === "") return;
+    try {
+      queue.push(parseTerminalRecord(line));
+    } catch (cause) {
+      // A record helm cannot parse means the stream is no longer trustworthy.
+      child.kill("SIGTERM");
+      queue.fail(`herdr terminal session observe ${target}: ${errorMessage(cause)}`);
+    }
+  });
+
+  const exit = new Promise<TerminalObservationExit>((resolve) => {
+    child.on("error", (cause) => {
+      const message = `${argv[0]}: ${cause.message}`;
+      queue.fail(message);
+      resolve({ exitCode: null, signal: null, error: message });
+    });
+    child.on("close", (code, signal) => {
+      queue.end();
+      resolve({
+        exitCode: code,
+        signal,
+        error: code === 0 || code === null ? null : `${argv[0]}: exited ${code}: ${stderr.trim()}`,
+      });
+    });
+  });
+
+  return {
+    argv,
+    exit,
+    close: () => child.kill("SIGTERM"),
+    [Symbol.asyncIterator]: () => queue[Symbol.asyncIterator](),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// One-shot pane commands
+// ---------------------------------------------------------------------------
+
+/**
+ * Send `command` to a pane followed by Enter.
+ *
+ * Stateless: it needs no attach ownership, so it never contends with a desktop
+ * client. `command` is passed as separate argv elements and is never joined
+ * into a shell string.
+ */
+export function paneRun(
+  cfg: HelmConfig,
+  paneId: string,
+  command: readonly string[],
+): Promise<ExecResult> {
+  if (command.length === 0) {
+    return Promise.reject(new Error("paneRun: command must have at least one element"));
+  }
+  return runArgv(cfg.herdrBin, ["pane", "run", paneId, ...command]);
+}
+
+/** Send named key presses to a pane (`esc` is the canonical Escape name). */
+export function paneSendKeys(
+  cfg: HelmConfig,
+  paneId: string,
+  keys: readonly string[],
+): Promise<ExecResult> {
+  if (keys.length === 0) {
+    return Promise.reject(new Error("paneSendKeys: keys must have at least one element"));
+  }
+  return runArgv(cfg.herdrBin, ["pane", "send-keys", paneId, ...keys]);
+}
+
+// ---------------------------------------------------------------------------
+// Discovery
+// ---------------------------------------------------------------------------
+
+export const agentStatusSchema = z.enum(["idle", "working", "blocked", "done", "unknown"]);
+export type HerdrAgentStatus = z.infer<typeof agentStatusSchema>;
+
+const agentSessionSchema = z.object({
+  source: z.string(),
+  agent: z.string(),
+  kind: z.enum(["id", "path"]),
+  value: z.string(),
+});
+
+const paneScrollSchema = z.object({
+  offset_from_bottom: z.number().int().nonnegative(),
+  max_offset_from_bottom: z.number().int().nonnegative(),
+  viewport_rows: z.number().int().nonnegative(),
+});
+
+/** A Herdr pane. Required fields follow the protocol-20 `PaneInfo` schema. */
+export const herdrPaneSchema = z.object({
+  pane_id: z.string(),
+  terminal_id: z.string(),
+  workspace_id: z.string(),
+  tab_id: z.string(),
+  focused: z.boolean(),
+  agent_status: agentStatusSchema,
+  revision: z.number().int().nonnegative(),
+  agent: z.string().nullish(),
+  agent_session: agentSessionSchema.nullish(),
+  cwd: z.string().nullish(),
+  foreground_cwd: z.string().nullish(),
+  title: z.string().nullish(),
+  terminal_title: z.string().nullish(),
+  terminal_title_stripped: z.string().nullish(),
+  scroll: paneScrollSchema.nullish(),
+});
+export type HerdrPane = z.infer<typeof herdrPaneSchema>;
+
+/** An agent-bearing pane, as reported by `herdr agent list`. */
+export const herdrAgentSchema = z.object({
+  pane_id: z.string(),
+  workspace_id: z.string(),
+  tab_id: z.string(),
+  terminal_id: z.string(),
+  agent: z.string(),
+  agent_status: agentStatusSchema,
+  focused: z.boolean(),
+  agent_session: agentSessionSchema.nullish(),
+  cwd: z.string().nullish(),
+  foreground_cwd: z.string().nullish(),
+  terminal_title: z.string().nullish(),
+  terminal_title_stripped: z.string().nullish(),
+  state_change_seq: z.number().int().nonnegative().nullish(),
+});
+export type HerdrAgent = z.infer<typeof herdrAgentSchema>;
+
+/** The CLI's response envelope: `{"id":…,"result":{…}}`. */
+function cliResultSchema<T extends z.ZodTypeAny>(result: T) {
+  return z.object({ id: z.string(), result });
+}
+
+const agentListSchema = cliResultSchema(
+  z.object({ type: z.literal("agent_list"), agents: z.array(herdrAgentSchema) }),
+);
+
+const paneListSchema = cliResultSchema(
+  z.object({ type: z.literal("pane_list"), panes: z.array(herdrPaneSchema) }),
+);
+
+/** List every pane Herdr has detected an agent in. */
+export async function agentList(cfg: HelmConfig): Promise<HerdrAgent[]> {
+  const result = await runHerdr(cfg, ["agent", "list"]);
+  return agentListSchema.parse(parseJson(result.stdout, "herdr agent list")).result.agents;
+}
+
+/** List panes, optionally within one workspace. */
+export async function paneList(cfg: HelmConfig, workspaceId?: string): Promise<HerdrPane[]> {
+  const args = workspaceId === undefined
+    ? ["pane", "list"]
+    : ["pane", "list", "--workspace", workspaceId];
+  const result = await runHerdr(cfg, args);
+  return paneListSchema.parse(parseJson(result.stdout, "herdr pane list")).result.panes;
+}
+
+// ---------------------------------------------------------------------------
+// events.subscribe
+// ---------------------------------------------------------------------------
+
+/**
+ * A subscription request.
+ *
+ * Note the asymmetry, which is protocol-20's own: subscriptions are named with
+ * dots (`pane.created`) while the events they deliver are named with
+ * underscores (`pane_created`) — except the three parameterized kinds, which
+ * keep their dotted name on the wire.
+ */
+export type HerdrSubscription =
+  | {
+      readonly type: "pane.agent_status_changed";
+      readonly pane_id?: string;
+      readonly agent_status?: HerdrAgentStatus | null;
+    }
+  | { readonly type: "pane.created" }
+  | { readonly type: "pane.closed" };
+
+export const paneAgentStatusChangedSchema = z.object({
+  pane_id: z.string(),
+  workspace_id: z.string(),
+  agent_status: agentStatusSchema,
+  agent: z.string().nullish(),
+  display_agent: z.string().nullish(),
+  title: z.string().nullish(),
+});
+export type PaneAgentStatusChanged = z.infer<typeof paneAgentStatusChangedSchema>;
+
+export const paneCreatedSchema = z.object({
+  type: z.literal("pane_created"),
+  pane: herdrPaneSchema,
+});
+
+export const paneClosedSchema = z.object({
+  type: z.literal("pane_closed"),
+  pane_id: z.string(),
+  workspace_id: z.string(),
+});
+
+/** A delivered event, discriminated by its wire `event` name. */
+export const herdrEventSchema = z.discriminatedUnion("event", [
+  z.object({ event: z.literal("pane.agent_status_changed"), data: paneAgentStatusChangedSchema }),
+  z.object({ event: z.literal("pane_created"), data: paneCreatedSchema }),
+  z.object({ event: z.literal("pane_closed"), data: paneClosedSchema }),
+]);
+export type HerdrEvent = z.infer<typeof herdrEventSchema>;
+
+/** Parse one line from the event stream, or `null` if helm does not model it. */
+export function parseHerdrEvent(line: string): HerdrEvent | null {
+  const parsed = herdrEventSchema.safeParse(parseJson(line, "herdr event"));
+  return parsed.success ? parsed.data : null;
+}
+
+export interface HerdrEventStream {
+  /** Resolves once the server has acknowledged the subscription. */
+  readonly ready: Promise<void>;
+  /** Resolves when the stream ends; rejects on a transport failure. */
+  readonly closed: Promise<void>;
+  close(): void;
+}
+
+const subscribeAckSchema = z.object({
+  result: z.object({ type: z.literal("subscription_started") }),
+});
+
+/**
+ * Open one control-socket connection and subscribe to `subscriptions`.
+ *
+ * `onEvent` is called for each event helm models; lines for anything else are
+ * ignored, so a Herdr upgrade that adds event kinds cannot break the stream.
+ */
+export function subscribeEvents(
+  cfg: HelmConfig,
+  subscriptions: readonly HerdrSubscription[],
+  onEvent: (event: HerdrEvent) => void,
+): HerdrEventStream {
+  if (subscriptions.length === 0) {
+    throw new Error("subscribeEvents: at least one subscription is required");
+  }
+
+  const socket: Socket = connect(cfg.herdrSocketPath);
+  socket.setEncoding("utf8");
+
+  let acknowledge: () => void;
+  let rejectReady: (cause: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    acknowledge = resolve;
+    rejectReady = reject;
+  });
+  let acknowledged = false;
+
+  const closed = new Promise<void>((resolve, reject) => {
+    const fail = (message: string): void => {
+      const error = new Error(message);
+      if (!acknowledged) rejectReady(error);
+      socket.destroy();
+      reject(error);
+    };
+
+    socket.on("connect", () => {
+      const request = {
+        id: `helm:events:${process.pid}`,
+        method: "events.subscribe",
+        params: { subscriptions },
+      };
+      socket.write(`${JSON.stringify(request)}\n`);
+    });
+
+    const lines = createInterface({ input: socket, crlfDelay: Infinity });
+    lines.on("line", (line) => {
+      if (line.trim() === "") return;
+      if (!acknowledged) {
+        const ack = subscribeAckSchema.safeParse(safeParseJson(line));
+        if (!ack.success) {
+          fail(`herdr events.subscribe was not acknowledged: ${line}`);
+          return;
+        }
+        acknowledged = true;
+        acknowledge();
+        return;
+      }
+      const event = parseHerdrEvent(line);
+      if (event !== null) onEvent(event);
+    });
+
+    socket.on("error", (cause) => fail(`herdr socket ${cfg.herdrSocketPath}: ${cause.message}`));
+    socket.on("close", () => {
+      if (!acknowledged) {
+        fail(`herdr socket ${cfg.herdrSocketPath}: closed before the subscription was acknowledged`);
+        return;
+      }
+      resolve();
+    });
+  });
+  // Both promises are handed to the caller; pre-attach no-op handlers so a
+  // failure the caller has not awaited yet is not an unhandled rejection.
+  closed.catch(() => undefined);
+  ready.catch(() => undefined);
+
+  return { ready, closed, close: () => socket.destroy() };
+}
+
+// ---------------------------------------------------------------------------
+// Capability check
+// ---------------------------------------------------------------------------
+
+export interface HerdrDoctorResult {
+  readonly ok: boolean;
+  readonly binary: string;
+  /** Protocol the local Herdr reports, or `null` if it could not be read. */
+  readonly protocol: number | null;
+  readonly minProtocol: number;
+  readonly socketPath: string;
+  readonly socketPresent: boolean;
+  /** One specific sentence per failed check. Empty when `ok`. */
+  readonly problems: readonly string[];
+}
+
+const schemaEnvelopeSchema = z.object({ protocol: z.number().int().positive() });
+
+/**
+ * Assert that Herdr is present, speaks a protocol helm understands, and has a
+ * control socket. Reports every problem it finds rather than the first.
+ */
+export async function herdrDoctor(cfg: HelmConfig): Promise<HerdrDoctorResult> {
+  const problems: string[] = [];
+
+  const result = await runArgv(cfg.herdrBin, ["api", "schema", "--json"]);
+  let protocol: number | null = null;
+  if (result.exitCode !== 0) {
+    problems.push(
+      result.error !== null
+        ? `herdr not runnable as ${JSON.stringify(cfg.herdrBin)}: ${result.error}`
+        : `could not read the Herdr API schema: ${describeFailure(result)}`,
+    );
+  } else {
+    const parsed = schemaEnvelopeSchema.safeParse(safeParseJson(result.stdout));
+    if (!parsed.success) {
+      problems.push("herdr api schema --json did not report a numeric protocol");
+    } else {
+      protocol = parsed.data.protocol;
+      if (protocol < HERDR_MIN_PROTOCOL) {
+        problems.push(
+          `Herdr protocol ${protocol} is older than the ${HERDR_MIN_PROTOCOL} helm requires; upgrade herdr`,
+        );
+      }
+    }
+  }
+
+  const socketPresent = isSocket(cfg.herdrSocketPath);
+  if (!socketPresent) {
+    problems.push(
+      `no Herdr control socket at ${cfg.herdrSocketPath}; is the Herdr server running?`,
+    );
+  }
+
+  return {
+    ok: problems.length === 0,
+    binary: cfg.herdrBin,
+    protocol,
+    minProtocol: HERDR_MIN_PROTOCOL,
+    socketPath: cfg.herdrSocketPath,
+    socketPresent,
+    problems,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+async function runHerdr(cfg: HelmConfig, args: readonly string[]): Promise<ExecResult> {
+  const result = await runArgv(cfg.herdrBin, args);
+  if (result.exitCode !== 0) throw new Error(describeFailure(result));
+  return result;
+}
+
+function isSocket(path: string): boolean {
+  try {
+    return statSync(path).isSocket();
+  } catch {
+    return false;
+  }
+}
+
+function parseJson(text: string, label: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (cause) {
+    throw new Error(`${label}: output is not JSON: ${errorMessage(cause)}`);
+  }
+}
+
+function safeParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** Backpressure-free async queue bridging an event emitter to `for await`. */
+class RecordQueue<T> {
+  #buffered: T[] = [];
+  #waiting: ((value: IteratorResult<T>) => void)[] = [];
+  #rejectors: ((cause: Error) => void)[] = [];
+  #done = false;
+  #failure: Error | null = null;
+
+  push(value: T): void {
+    if (this.#done) return;
+    const waiter = this.#waiting.shift();
+    this.#rejectors.shift();
+    if (waiter !== undefined) waiter({ value, done: false });
+    else this.#buffered.push(value);
+  }
+
+  end(): void {
+    if (this.#done) return;
+    this.#done = true;
+    for (const waiter of this.#waiting) waiter({ value: undefined, done: true });
+    this.#waiting = [];
+    this.#rejectors = [];
+  }
+
+  fail(message: string): void {
+    if (this.#done) return;
+    this.#failure = new Error(message);
+    this.#done = true;
+    for (const reject of this.#rejectors) reject(this.#failure);
+    this.#waiting = [];
+    this.#rejectors = [];
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: (): Promise<IteratorResult<T>> => {
+        const buffered = this.#buffered.shift();
+        if (buffered !== undefined) return Promise.resolve({ value: buffered, done: false });
+        if (this.#failure !== null) return Promise.reject(this.#failure);
+        if (this.#done) return Promise.resolve({ value: undefined, done: true });
+        return new Promise<IteratorResult<T>>((resolve, reject) => {
+          this.#waiting.push(resolve);
+          this.#rejectors.push(reject);
+        });
+      },
+    };
+  }
+}

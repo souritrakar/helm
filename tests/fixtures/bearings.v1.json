@@ -1,0 +1,48 @@
+{
+  "schema": "fm-bearings.v1",
+  "home": "fixture/firstmate",
+  "generated": "2026-09-04T23:56:44Z",
+  "prs": "not_requested (run: /bearings include PRs)",
+  "in_flight": [
+    {
+      "id": "helm-foundation",
+      "kind": "ship",
+      "state": "working",
+      "doing": "harness busy (claude-hook)"
+    }
+  ],
+  "secondmates": [],
+  "secondmate_reconcile": [],
+  "decisions_open": [
+    {
+      "id": "webface-plan",
+      "key": "webface-plan",
+      "verb": "captain-hold",
+      "summary": "helm SPEC - captain call inventory: six spec decisions await the captain",
+      "owner": "(main)"
+    }
+  ],
+  "landed": [
+    {
+      "id": "linear-cli",
+      "what": "Build the deterministic Linear CLI (axi-style) + workflow layers",
+      "artifact": "https://github.com/example/linear-axi/pull/1",
+      "owner": "(main)"
+    }
+  ],
+  "gates": [
+    {
+      "id": "helm-terminal",
+      "title": "helm Lane B - terminal bridge",
+      "blocked_by": "helm-foundation",
+      "reason": "blocked by helm-foundation",
+      "owner": "(main)"
+    }
+  ],
+  "reports": [{ "id": "webface-plan", "path": "/fixture/firstmate/data/webface-plan/report.md" }],
+  "recorded_prs": [],
+  "omitted": [
+    { "surface": "backlog item bodies", "reveal": "--fields bodies" },
+    { "surface": "live PR discovery + checks", "reveal": "--include-prs" }
+  ]
+}
