@@ -16,12 +16,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runArgv } from "@/lib/exec";
 import { parseFleetSnapshot } from "@/lib/fm";
 import {
-  FIXTURE_NOW,
   FIXTURE_NOW_EPOCH,
   SKIP_FM_CONTRACT,
   findFirstmateBin,
   normalizeSnapshot,
   requireFirstmateBin,
+  seamEnv,
 } from "./seam";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
@@ -44,12 +44,7 @@ describe.skipIf(SKIP_FM_CONTRACT)("fleet-snapshot.v1.json is what the real seam 
       utimesSync(join(home, "state", entry), FIXTURE_NOW_EPOCH, FIXTURE_NOW_EPOCH);
     }
     const result = await runArgv(join(firstmateBin, "fm-fleet-snapshot.sh"), ["--json"], {
-      env: {
-        ...process.env,
-        FM_HOME: home,
-        FM_SNAPSHOT_NOW: FIXTURE_NOW,
-        FM_SNAPSHOT_NOW_EPOCH: String(FIXTURE_NOW_EPOCH),
-      },
+      env: seamEnv(home),
       timeoutMs: 120_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);

@@ -15,8 +15,12 @@
  *   decisions that a later unrelated `done:` line appears to close.
  *   {@link scanOpenDecisions} calls `fm-classify-lib.sh` itself.
  *
- * Schemas describe the fields helm reads and let unknown fields through, so
- * firstmate can add fields without breaking helm.
+ * Schemas describe only the fields helm reads. An unknown field is TOLERATED —
+ * it never fails the parse, so firstmate can add fields without breaking helm —
+ * but `z.object` also STRIPS it, so the returned value carries the modelled
+ * fields and nothing else. A later lane that needs `paths.meta`, `pr.url`,
+ * `hints.last_event_text` or any other unmodelled field must add it to the
+ * schema here; reading it off the returned object will find it absent.
  */
 import { join } from "node:path";
 import { z } from "zod";

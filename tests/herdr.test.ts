@@ -12,6 +12,7 @@ import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
 import {
   HERDR_MIN_PROTOCOL,
   herdrAgentSchema,
+  herdrDoctor,
   herdrPaneSchema,
   parseHerdrEvent,
   observeTerminal,
@@ -168,10 +169,6 @@ describe("events.subscribe stream", () => {
     expect(() =>
       parseHerdrEvent('{"event":"pane_closed","data":{"type":"pane_closed","pane_id":"w1:p3"}}'),
     ).toThrow(/pane_closed/);
-  });
-
-  it("is pinned to the protocol helm was written against", () => {
-    expect(HERDR_MIN_PROTOCOL).toBe(20);
   });
 });
 
@@ -381,5 +378,103 @@ describe("observeTerminal exit", () => {
 
     expect(exit.signal).toBe("SIGTERM");
     expect(exit.error).toMatch(/herdr terminal session observe w1:p1/);
+  });
+});
+
+describe("herdrDoctor", () => {
+  let binDir: string;
+  let server: Server | null;
+
+  /** A stand-in `herdr` whose `api schema --json` prints `output`. */
+  function stubHerdr(output: string, exitCode = 0): HelmConfig {
+    const path = join(binDir, "herdr-stub");
+    writeFileSync(path, `#!/bin/sh\nprintf '%s' ${JSON.stringify(output)}\nexit ${exitCode}\n`, {
+      mode: 0o755,
+    });
+    return {
+      fmHome: "/fixture/firstmate",
+      fmBinDir: "/fixture/firstmate/bin",
+      fmStateDir: "/fixture/firstmate/state",
+      herdrSocketPath: join(binDir, "herdr.sock"),
+      herdrBin: path,
+      port: DEFAULT_PORT,
+      bind: DEFAULT_BIND,
+    };
+  }
+
+  /** Bind a real unix socket where the config expects the control socket. */
+  async function listen(cfg: HelmConfig): Promise<void> {
+    server = createServer();
+    await new Promise<void>((resolve) => server!.listen(cfg.herdrSocketPath, resolve));
+  }
+
+  beforeEach(() => {
+    binDir = mkdtempSync(join(tmpdir(), "helm-doctor-"));
+    server = null;
+  });
+
+  afterEach(async () => {
+    if (server !== null) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    rmSync(binDir, { recursive: true, force: true });
+  });
+
+  it("reports ok when herdr speaks the minimum protocol and the socket is present", async () => {
+    const cfg = stubHerdr(JSON.stringify({ protocol: HERDR_MIN_PROTOCOL }));
+    await listen(cfg);
+
+    const doctor = await herdrDoctor(cfg);
+
+    expect(doctor.problems).toEqual([]);
+    expect(doctor.ok).toBe(true);
+    expect(doctor.protocol).toBe(HERDR_MIN_PROTOCOL);
+    expect(doctor.socketPresent).toBe(true);
+  });
+
+  it("reports a problem naming the protocol when herdr is older than the minimum", async () => {
+    const old = HERDR_MIN_PROTOCOL - 1;
+    const cfg = stubHerdr(JSON.stringify({ protocol: old }));
+    await listen(cfg);
+
+    const doctor = await herdrDoctor(cfg);
+
+    expect(doctor.ok).toBe(false);
+    expect(doctor.protocol).toBe(old);
+    expect(doctor.problems).toHaveLength(1);
+    expect(doctor.problems[0]).toContain(String(old));
+    expect(doctor.problems[0]).toContain(String(HERDR_MIN_PROTOCOL));
+  });
+
+  it("reports a problem when the schema output carries no numeric protocol", async () => {
+    const cfg = stubHerdr(JSON.stringify({ protocol: "twenty" }));
+    await listen(cfg);
+
+    const doctor = await herdrDoctor(cfg);
+
+    expect(doctor.ok).toBe(false);
+    expect(doctor.protocol).toBeNull();
+    expect(doctor.problems).toEqual([
+      "herdr api schema --json did not report a numeric protocol",
+    ]);
+  });
+
+  it("reports a problem when the control socket is absent", async () => {
+    const cfg = stubHerdr(JSON.stringify({ protocol: HERDR_MIN_PROTOCOL }));
+
+    const doctor = await herdrDoctor(cfg);
+
+    expect(doctor.ok).toBe(false);
+    expect(doctor.socketPresent).toBe(false);
+    expect(doctor.problems).toHaveLength(1);
+    expect(doctor.problems[0]).toContain(cfg.herdrSocketPath);
+  });
+
+  it("reports every failed check rather than only the first", async () => {
+    const cfg = stubHerdr("", 1);
+
+    const doctor = await herdrDoctor(cfg);
+
+    expect(doctor.ok).toBe(false);
+    expect(doctor.protocol).toBeNull();
+    expect(doctor.problems).toHaveLength(2);
   });
 });

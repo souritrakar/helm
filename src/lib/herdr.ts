@@ -279,7 +279,8 @@ const paneListSchema = cliResultSchema(
 /** List every pane Herdr has detected an agent in. */
 export async function agentList(cfg: HelmConfig): Promise<HerdrAgent[]> {
   const result = await runHerdr(cfg, ["agent", "list"]);
-  return agentListSchema.parse(parseJson(result.stdout, "herdr agent list")).result.agents;
+  const label = "herdr agent list";
+  return validate(agentListSchema, parseJson(result.stdout, label), label).result.agents;
 }
 
 /** List panes, optionally within one workspace. */
@@ -288,7 +289,8 @@ export async function paneList(cfg: HelmConfig, workspaceId?: string): Promise<H
     ? ["pane", "list"]
     : ["pane", "list", "--workspace", workspaceId];
   const result = await runHerdr(cfg, args);
-  return paneListSchema.parse(parseJson(result.stdout, "herdr pane list")).result.panes;
+  const label = "herdr pane list";
+  return validate(paneListSchema, parseJson(result.stdout, label), label).result.panes;
 }
 
 // ---------------------------------------------------------------------------
@@ -362,17 +364,7 @@ export function parseHerdrEvent(line: string): HerdrEvent | null {
   const raw = parseJson(line, "herdr event");
   const envelope = eventEnvelopeSchema.safeParse(raw);
   if (!envelope.success || !MODELLED_EVENT_NAMES.has(envelope.data.event)) return null;
-  const parsed = herdrEventSchema.safeParse(raw);
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .slice(0, 5)
-      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-      .join("; ");
-    throw new Error(
-      `herdr event ${envelope.data.event} does not match the contract helm reads: ${issues}`,
-    );
-  }
-  return parsed.data;
+  return validate(herdrEventSchema, raw, `herdr event ${envelope.data.event}`);
 }
 
 export interface HerdrEventStream {
@@ -579,6 +571,22 @@ function isSocket(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Schema-check a decoded Herdr payload, naming the seam and the offending
+ * fields so a protocol drift reads as a diagnosis rather than a raw ZodError.
+ */
+function validate<T extends z.ZodTypeAny>(schema: T, value: unknown, label: string): z.infer<T> {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .slice(0, 5)
+      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`${label} does not match the contract helm reads: ${issues}`);
+  }
+  return parsed.data as z.infer<T>;
 }
 
 function parseJson(text: string, label: string): unknown {
