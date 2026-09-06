@@ -33,7 +33,7 @@ access later is a config swap rather than a code change.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `FM_HOME` | *(required)* | firstmate's operational home. Must be a readable directory containing `bin/` and `state/`. |
-| `HERDR_SOCKET_PATH` | `$XDG_CONFIG_HOME/herdr/herdr.sock` | Herdr control socket. |
+| `HERDR_SOCKET_PATH` | `${XDG_CONFIG_HOME:-~/.config}/herdr/herdr.sock` | Herdr control socket. An unset or empty `XDG_CONFIG_HOME` takes the `~/.config` default. |
 | `HERDR_BIN` | `herdr` | Herdr executable, resolved on `PATH` unless absolute. |
 | `HELM_PORT` | `7333` | HTTP port. |
 | `HELM_BIND` | `127.0.0.1` | Bind address. |
