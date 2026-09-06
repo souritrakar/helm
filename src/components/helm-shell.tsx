@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { Dialog } from "@base-ui/react/dialog";
 import {
   Check,
   CircleAlert,
@@ -17,8 +18,10 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { GroupImperativeHandle } from "react-resizable-panels";
+import type { Layout } from "react-resizable-panels";
 
+import { saveSplitLayout, splitDefaultLayout } from "@/components/split-layout";
+import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -30,7 +33,7 @@ import type { InboxItem, InboxItemKind, InboxItemState, InboxUrgency } from "@/l
 type Filter = "blocking" | "all" | "answered";
 type DisplayState = "ready" | "loading" | "empty" | "error";
 
-const layoutStorageKey = "helm:split-layout:v1";
+const splitGroupId = "helm-main-split";
 
 const fixtureItems: readonly InboxItem[] = [
   {
@@ -194,6 +197,11 @@ const stateStyles: Record<InboxItemState, string> = {
   dismissed: "border-border bg-muted text-muted-foreground",
 };
 
+const closedNotices: Record<Exclude<InboxItemState, "open">, string> = {
+  answered: "Answered. This card is read-only.",
+  dismissed: "Dismissed. This card is read-only.",
+};
+
 function filterItems(filter: Filter) {
   if (filter === "blocking") return fixtureItems.filter((item) => item.state === "open" && item.urgency === "blocking");
   if (filter === "answered") return fixtureItems.filter((item) => item.state === "answered");
@@ -204,8 +212,7 @@ function Badge({ children, className }: { children: React.ReactNode; className: 
   return <span className={`inline-flex items-center rounded-full border px-2 py-1 text-sm/5 sm:text-xs/4 ${className}`}>{children}</span>;
 }
 
-export function HelmShell() {
-  const groupRef = useRef<GroupImperativeHandle>(null);
+export function HelmShell({ defaultLayout }: { defaultLayout?: Layout }) {
   const [filter, setFilter] = useState<Filter>("blocking");
   const [displayState, setDisplayState] = useState<DisplayState>("ready");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -220,17 +227,8 @@ export function HelmShell() {
   }, []);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(layoutStorageKey);
-    if (!saved) return;
-    try {
-      groupRef.current?.setLayout(JSON.parse(saved) as Record<string, number>);
-    } catch {
-      window.localStorage.removeItem(layoutStorageKey);
-    }
-  }, []);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (shortcutsOpen) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select")) return;
@@ -238,11 +236,10 @@ export function HelmShell() {
       if (event.key === "2") setFilter("all");
       if (event.key === "3") setFilter("answered");
       if (event.key === "?") setShortcutsOpen(true);
-      if (event.key === "Escape") setShortcutsOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [shortcutsOpen]);
 
   return (
     <main className="isolate flex min-h-dvh flex-col bg-background">
@@ -254,20 +251,19 @@ export function HelmShell() {
             <p className="hidden text-sm/5 text-muted-foreground sm:block">Fleet terminal and captain inbox.</p>
           </div>
         </div>
-        <button type="button" onClick={() => setShortcutsOpen(true)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-md border bg-background px-2 text-sm text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" aria-label="Show keyboard shortcuts">
+        <Button variant="outline" onClick={() => setShortcutsOpen(true)} className="shrink-0 text-muted-foreground" aria-label="Show keyboard shortcuts">
           <Command className="size-4 shrink-0" />
           <span className="hidden sm:inline">Shortcuts</span>
           <kbd className="font-mono text-xs">?</kbd>
-        </button>
+        </Button>
       </header>
 
       <ResizablePanelGroup
-        id="helm-main-split"
-        groupRef={groupRef}
+        id={splitGroupId}
         orientation={compact ? "vertical" : "horizontal"}
-        defaultLayout={{ terminal: 56, inbox: 44 }}
+        defaultLayout={defaultLayout ?? splitDefaultLayout}
         onLayoutChanged={(layout, meta) => {
-          if (meta.isUserInteraction) window.localStorage.setItem(layoutStorageKey, JSON.stringify(layout));
+          if (meta.isUserInteraction) saveSplitLayout(layout);
         }}
         className="min-h-0 flex-1"
       >
@@ -280,7 +276,7 @@ export function HelmShell() {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      {shortcutsOpen && <ShortcutDialog onClose={() => setShortcutsOpen(false)} />}
+      <ShortcutDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <Toaster position="bottom-right" richColors closeButton />
     </main>
   );
@@ -328,20 +324,20 @@ function InboxList({ filter, setFilter, displayState, setDisplayState }: { filte
             </div>
             <p className="mt-1 text-base/7 text-pretty text-muted-foreground sm:text-sm/6">Rendered locally until the inbox store arrives.</p>
           </div>
-          <span className="shrink-0 font-mono text-sm tabular-nums text-muted-foreground">{visibleItems.length}</span>
+          <span className="shrink-0 font-mono text-sm tabular-nums text-muted-foreground">{displayState === "ready" ? visibleItems.length : "\u2014"}</span>
         </div>
-        <div className="mt-3 flex min-w-0 gap-1 overflow-x-auto" aria-label="Inbox filters" role="tablist">
+        <div className="mt-3 flex min-w-0 gap-1 overflow-x-auto" aria-label="Inbox filters" role="group">
           {labels.map((item) => (
-            <button key={item.value} type="button" role="tab" aria-selected={filter === item.value} onClick={() => setFilter(item.value)} className={`shrink-0 rounded-md px-3 py-1.5 text-sm ${filter === item.value ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+            <Button key={item.value} variant={filter === item.value ? "default" : "ghost"} aria-pressed={filter === item.value} onClick={() => setFilter(item.value)} className="shrink-0">
               {item.label} <kbd className="ml-1 font-mono text-xs opacity-70">{item.shortcut}</kbd>
-            </button>
+            </Button>
           ))}
         </div>
-        <div className="mt-3 flex min-w-0 gap-1 overflow-x-auto" aria-label="Fixture display states">
+        <div className="mt-3 flex min-w-0 gap-1 overflow-x-auto" aria-label="Fixture display states" role="group">
           {(["ready", "loading", "empty", "error"] as const).map((state) => (
-            <button key={state} type="button" onClick={() => setDisplayState(state)} className={`shrink-0 rounded-md px-2 py-1 text-sm capitalize ${displayState === state ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted"}`}>
+            <Button key={state} size="xs" variant={displayState === state ? "secondary" : "ghost"} aria-pressed={displayState === state} onClick={() => setDisplayState(state)} className="shrink-0 capitalize">
               {state}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -356,6 +352,7 @@ function InboxList({ filter, setFilter, displayState, setDisplayState }: { filte
 }
 
 function InboxCard({ item }: { item: InboxItem }) {
+  const closed = item.state !== "open";
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [submittedText, setSubmittedText] = useState<string | null>(null);
@@ -384,9 +381,10 @@ function InboxCard({ item }: { item: InboxItem }) {
             {item.taskId && <span className="font-mono text-xs">{item.taskId}</span>}
             {item.answeredAt && <span className="flex items-center gap-1"><Clock3 className="size-4 shrink-0" />Answered</span>}
           </div>
-          {item.options.length > 0 && <div className="mt-4 flex min-w-0 flex-wrap gap-2">{item.options.map((option) => <button key={option.value} type="button" onClick={() => { setSelected(option.value); toast.info("Option selected locally", { description: option.hint ?? "This shell does not send answers." }); }} className={`rounded-md border px-3 py-1.5 text-sm ${selected === option.value ? "border-foreground bg-foreground text-background" : "bg-background hover:bg-muted"}`} title={option.hint}>{option.label}{option.value === item.recommendValue && <span className="ml-1.5 font-mono text-xs opacity-70">recommended</span>}</button>)}</div>}
-          {item.allowFreeform && <div className="mt-3 flex min-w-0 flex-col gap-2 @sm:flex-row"><input name={`response-${item.id}`} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submitText(); }} placeholder="Write a response…" aria-label={`Response for ${item.title}`} className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-base outline-none focus-visible:outline-2 focus-visible:outline-offset-0 sm:text-sm" /><button type="button" onClick={submitText} disabled={!draft.trim()} className="shrink-0 rounded-md border bg-background px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50 hover:bg-muted">Preview</button></div>}
-          {submittedText && <p className="mt-2 rounded-md bg-muted px-3 py-2 text-base/7 text-muted-foreground sm:text-sm/6"><span className="font-medium text-foreground">Local preview:</span> {submittedText}</p>}
+          {item.state !== "open" && <p className="mt-3 text-base/7 text-pretty text-muted-foreground sm:text-sm/6">{closedNotices[item.state]}</p>}
+          {!closed && item.options.length > 0 && <div className="mt-4 flex min-w-0 flex-wrap gap-2">{item.options.map((option) => <Button key={option.value} size="lg" variant={selected === option.value ? "default" : "outline"} aria-pressed={selected === option.value} onClick={() => { setSelected(option.value); toast.info("Option selected locally", { description: option.hint ?? "This shell does not send answers." }); }} title={option.hint}>{option.label}{option.value === item.recommendValue && <span className="ml-1.5 font-mono text-xs opacity-70">recommended</span>}</Button>)}</div>}
+          {!closed && item.allowFreeform && <div className="mt-3 flex min-w-0 flex-col gap-2 @sm:flex-row"><input name={`response-${item.id}`} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submitText(); }} placeholder="Write a response…" aria-label={`Response for ${item.title}`} className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-base outline-none focus-visible:outline-2 focus-visible:outline-offset-0 sm:text-sm" /><Button size="lg" variant="outline" onClick={submitText} disabled={!draft.trim()} className="shrink-0">Preview</Button></div>}
+          {!closed && submittedText && <p className="mt-2 rounded-md bg-muted px-3 py-2 text-base/7 text-muted-foreground sm:text-sm/6"><span className="font-medium text-foreground">Local preview:</span> {submittedText}</p>}
         </div>
       </div>
     </article>
@@ -402,9 +400,34 @@ function UrgencyIcon({ urgency }: { urgency: InboxUrgency }) {
 
 function LoadingState() { return <div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 p-6 text-center"><LoaderCircle className="size-5 animate-spin text-muted-foreground" /><p className="text-base/7 text-muted-foreground sm:text-sm/6">Loading fixture inbox.</p></div>; }
 function EmptyState() { return <div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 p-6 text-center"><Check className="size-5 text-emerald-600 dark:text-emerald-400" /><h3 className="text-base font-semibold sm:text-sm">Nothing needs attention</h3><p className="max-w-[34ch] text-base/7 text-pretty text-muted-foreground sm:text-sm/6">This filter has no matching inbox cards.</p></div>; }
-function ErrorState({ onRetry }: { onRetry(): void }) { return <div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 p-6 text-center"><CircleX className="size-5 text-destructive" /><h3 className="text-base font-semibold sm:text-sm">Inbox fixture unavailable</h3><p className="max-w-[34ch] text-base/7 text-pretty text-muted-foreground sm:text-sm/6">This UI-only error state does not retry a live store.</p><button type="button" onClick={onRetry} className="rounded-md border bg-background px-3 py-2 text-sm hover:bg-muted">Return to fixture</button></div>; }
+function ErrorState({ onRetry }: { onRetry(): void }) { return <div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 p-6 text-center"><CircleX className="size-5 text-destructive" /><h3 className="text-base font-semibold sm:text-sm">Inbox fixture unavailable</h3><p className="max-w-[34ch] text-base/7 text-pretty text-muted-foreground sm:text-sm/6">This UI-only error state does not retry a live store.</p><Button variant="outline" size="lg" onClick={onRetry}>Return to fixture</Button></div>; }
 
-function ShortcutDialog({ onClose }: { onClose(): void }) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation" onMouseDown={onClose}><section className="w-full max-w-sm rounded-lg border bg-popover p-5 shadow-lg dark:shadow-none" role="dialog" aria-modal="true" aria-labelledby="shortcut-title" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="shortcut-title" className="text-lg font-semibold">Keyboard shortcuts</h2><p className="mt-1 text-base/7 text-pretty text-muted-foreground sm:text-sm/6">Use shortcuts outside a response field.</p></div><button type="button" onClick={onClose} className="relative rounded-md p-1 text-muted-foreground hover:bg-muted" aria-label="Close shortcuts"><X className="size-4 shrink-0" /><span className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-x-1/2 -translate-y-1/2 pointer-fine:hidden" aria-hidden="true" /></button></div><dl className="mt-5 divide-y"><ShortcutRow keys="1" label="Show blocking" /><ShortcutRow keys="2" label="Show all" /><ShortcutRow keys="3" label="Show answered" /><ShortcutRow keys="?" label="Open shortcuts" /><ShortcutRow keys="Esc" label="Close shortcuts" /></dl></section></div>;
+function ShortcutDialog({ open, onOpenChange }: { open: boolean; onOpenChange(open: boolean): void }) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-popover p-5 shadow-lg dark:shadow-none">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <Dialog.Title className="text-lg font-semibold">Keyboard shortcuts</Dialog.Title>
+              <Dialog.Description className="mt-1 text-base/7 text-pretty text-muted-foreground sm:text-sm/6">Use shortcuts outside a response field.</Dialog.Description>
+            </div>
+            <Dialog.Close render={<Button variant="ghost" size="icon-sm" className="relative" aria-label="Close shortcuts" />}>
+              <X className="size-4 shrink-0" />
+              <span className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-x-1/2 -translate-y-1/2 pointer-fine:hidden" aria-hidden="true" />
+            </Dialog.Close>
+          </div>
+          <dl className="mt-5 divide-y">
+            <ShortcutRow keys="1" label="Show blocking" />
+            <ShortcutRow keys="2" label="Show all" />
+            <ShortcutRow keys="3" label="Show answered" />
+            <ShortcutRow keys="?" label="Open shortcuts" />
+            <ShortcutRow keys="Esc" label="Close shortcuts" />
+          </dl>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
 }
 function ShortcutRow({ keys, label }: { keys: string; label: string }) { return <div className="flex items-center justify-between gap-4 py-2 first:pt-0 last:pb-0"><dt className="text-base sm:text-sm">{label}</dt><dd><kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{keys}</kbd></dd></div>; }
