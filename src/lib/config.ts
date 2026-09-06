@@ -63,6 +63,11 @@ const outputMatchesSchema = z.array(z.object({
   urgency: z.enum(["blocking", "attention", "fyi"]).optional(),
 }));
 
+/** The listen endpoint on its own, for callers that need no FM_HOME. */
+export interface HelmEndpoint {
+  readonly port: number;
+  readonly bind: string;
+}
 export const DEFAULT_PORT = 7333;
 export const DEFAULT_BIND = "127.0.0.1";
 export const DEFAULT_HERDR_BIN = "herdr";
@@ -87,10 +92,25 @@ export function loadConfig(env: ConfigEnv = process.env): HelmConfig {
     helmStateDir: resolveHelmStateDir(env, fmHome),
     herdrSocketPath: resolveHerdrSocketPath(env),
     herdrBin: nonEmpty("HERDR_BIN", env.HERDR_BIN) ?? DEFAULT_HERDR_BIN,
-    port: parsePort("HELM_PORT", env.HELM_PORT),
-    bind: parseBind("HELM_BIND", env.HELM_BIND),
+    ...loadEndpoint(env),
     outputMatches: parseOutputMatches(env.HELM_OUTPUT_MATCHES),
     captainPane: nonEmpty("HELM_CAPTAIN_PANE", env.HELM_CAPTAIN_PANE),
+  };
+}
+
+/**
+ * Read and validate just the listen endpoint from `env`.
+ *
+ * The launcher needs the endpoint for its status line, its readiness probe, and
+ * the unit file it generates, in situations where FM_HOME may not be usable.
+ * Sharing this with {@link loadConfig} keeps one owner of the defaults.
+ *
+ * @throws {ConfigError} on any invalid input.
+ */
+export function loadEndpoint(env: ConfigEnv = process.env): HelmEndpoint {
+  return {
+    port: parsePort("HELM_PORT", env.HELM_PORT),
+    bind: parseBind("HELM_BIND", env.HELM_BIND),
   };
 }
 

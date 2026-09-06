@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { portIsAvailable, versionAtLeast } from "@/lib/launch";
+import { describePortProblem, portIsAvailable, probePort, versionAtLeast } from "@/lib/launch";
 
 describe("launch checks", () => {
   let server: ReturnType<typeof createServer> | undefined;
@@ -14,5 +14,17 @@ describe("launch checks", () => {
     server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const address = server.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
     await expect(portIsAvailable("127.0.0.1", address.port)).resolves.toBe(false);
+    await expect(probePort("127.0.0.1", address.port)).resolves.toEqual({ available: false, code: "EADDRINUSE" });
+  });
+  it("distinguishes an unassignable bind address from a taken port", async () => {
+    // 192.0.2.1 is TEST-NET-1: reserved for documentation, never a local address.
+    await expect(probePort("192.0.2.1", 7333)).resolves.toEqual({ available: false, code: "EADDRNOTAVAIL" });
+  });
+  it("names the cause rather than always blaming another listener", () => {
+    const endpoint = { bind: "192.0.2.1", port: 7333 };
+    expect(describePortProblem(endpoint, "EADDRINUSE")).toBe("192.0.2.1:7333 is already in use");
+    expect(describePortProblem({ bind: "127.0.0.1", port: 80 }, "EACCES")).toContain("permission denied");
+    expect(describePortProblem(endpoint, "EADDRNOTAVAIL")).toContain("is not an address of this host");
+    expect(describePortProblem(endpoint, "ENOTFOUND")).toContain("ENOTFOUND");
   });
 });

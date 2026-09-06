@@ -7,56 +7,120 @@ readonly PID_FILE="$HELM_STATE_DIR/helm.pid"
 readonly LOG_FILE="$HELM_STATE_DIR/helm.log"
 usage() { echo "usage: bin/helm {doctor|build|start|stop|status|logs|install-service}" >&2; }
 ensure_state_dir() { mkdir -p "$HELM_STATE_DIR"; }
-pid_is_live() { [[ -s "$PID_FILE" ]] && kill -0 "$(<"$PID_FILE")" 2>/dev/null; }
+# /proc/<pid>/stat field <n>, counted as procfs numbers them; comm may contain spaces.
+proc_field() {
+  local stat
+  stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+  [[ -n "$stat" ]] || return 1
+  awk -v n="$2" '{ print $(n - 2) }' <<< "${stat##*') '}"
+}
+# pid alone is ambiguous after a reboot or pid wrap, so pair it with the start time.
+write_pid() { local started=""; started="$(proc_field "$1" 22)" || true; printf '%s %s\n' "$1" "$started" > "$PID_FILE"; }
+pid_from_file() { [[ -s "$PID_FILE" ]] && awk 'NR == 1 { print $1 }' "$PID_FILE"; }
+pid_is_live() {
+  local pid recorded current
+  [[ -s "$PID_FILE" ]] || return 1
+  read -r pid recorded < "$PID_FILE" || return 1
+  [[ -n "${pid:-}" && -n "${recorded:-}" ]] || return 1
+  current="$(proc_field "$pid" 22)" || return 1
+  [[ "$current" == "$recorded" ]]
+}
+# Signal the whole process group when the recorded process leads one, so the
+# server under `pnpm start` dies with its wrapper instead of being orphaned.
+signal_target() {
+  local pgrp
+  pgrp="$(proc_field "$1" 5)" || { printf '%s\n' "$1"; return 0; }
+  if [[ "$pgrp" == "$1" ]]; then printf -- '-%s\n' "$1"; else printf '%s\n' "$1"; fi
+}
 remove_stale_pid() { [[ -e "$PID_FILE" ]] && ! pid_is_live && rm -f "$PID_FILE" || true; }
 rotate_logs() {
   ensure_state_dir
   local max_bytes=$((10 * 1024 * 1024)) index
   [[ -f "$LOG_FILE" && $(wc -c < "$LOG_FILE") -ge $max_bytes ]] || return 0
   for ((index=4; index>=1; index--)); do [[ -f "$LOG_FILE.$index" ]] && mv -f "$LOG_FILE.$index" "$LOG_FILE.$((index + 1))"; done
-  mv -f "$LOG_FILE" "$LOG_FILE.1"
+  # The running server holds this inode open in append mode, so copy and truncate rather than rename.
+  cp -f "$LOG_FILE" "$LOG_FILE.1"
+  : > "$LOG_FILE"
 }
 doctor() { pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-doctor.ts"; }
+endpoint() { pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-endpoint.ts"; }
+# 0.0.0.0 and :: are listen addresses, not connect addresses.
+probe_address() {
+  case "$1" in 0.0.0.0|"") echo "127.0.0.1" ;; ::|::0) echo "::1" ;; *) echo "$1" ;; esac
+}
+wait_for_listen() {
+  local host deadline
+  host="$(probe_address "$1")"
+  deadline=$((SECONDS + 30))
+  while (( SECONDS < deadline )); do
+    pid_is_live || return 1
+    if (exec 3<>"/dev/tcp/$host/$2") 2>/dev/null; then return 0; fi
+    sleep 0.2
+  done
+  return 1
+}
+terminate_recorded() {
+  local pid target
+  pid="$(pid_from_file)" || return 0
+  target="$(signal_target "$pid")"
+  kill -TERM -- "$target" 2>/dev/null || true
+  for _ in {1..30}; do pid_is_live || { rm -f "$PID_FILE"; return 0; }; sleep 0.1; done
+  return 1
+}
 start() {
   ensure_state_dir; remove_stale_pid
-  if pid_is_live; then echo "helm: already running (pid $(<"$PID_FILE")); refusing to double-bind" >&2; return 1; fi
+  if pid_is_live; then echo "helm: already running (pid $(pid_from_file)); refusing to double-bind" >&2; return 1; fi
   doctor; rotate_logs
   if [[ "${HELM_FOREGROUND:-0}" == "1" ]]; then
-    echo "$$" > "$PID_FILE"; trap 'rm -f "$PID_FILE"' EXIT
+    write_pid "$$"
     exec >> "$LOG_FILE" 2>&1; exec pnpm --dir "$HELM_ROOT" start
   fi
-  (cd "$HELM_ROOT" && pnpm start >> "$LOG_FILE" 2>&1 & echo $! > "$PID_FILE")
-  sleep 1
-  pid_is_live && { echo "helm: started (pid $(<"$PID_FILE"))"; return 0; }
-  echo "helm: failed to start; see $LOG_FILE" >&2; return 1
+  local bind port
+  if ! read -r bind port < <(endpoint); then echo "helm: refusing to start; the configuration is not usable" >&2; return 1; fi
+  setsid bash -c 'cd "$1" && exec pnpm start' helm "$HELM_ROOT" >> "$LOG_FILE" 2>&1 &
+  write_pid "$!"
+  if wait_for_listen "$bind" "$port"; then echo "helm: started (pid $(pid_from_file)) on $bind:$port"; return 0; fi
+  terminate_recorded || true
+  echo "helm: failed to start; nothing is listening on $bind:$port; see $LOG_FILE" >&2; return 1
 }
 stop() {
   if systemctl --user is-active --quiet helm.service 2>/dev/null; then systemctl --user stop helm.service; echo "helm: systemd service stopped"; return 0; fi
   remove_stale_pid
   if ! pid_is_live; then echo "helm: not running"; return 0; fi
-  kill -TERM "$(<"$PID_FILE")"
-  for _ in {1..30}; do pid_is_live || { rm -f "$PID_FILE"; echo "helm: stopped"; return 0; }; sleep 0.1; done
+  terminate_recorded && { echo "helm: stopped"; return 0; }
   echo "helm: process did not stop cleanly" >&2; return 1
 }
 status() {
   remove_stale_pid
-  local unit="inactive" process="stopped"
+  local unit="inactive" process="stopped" endpoint_text="unavailable" bind port
   systemctl --user is-active --quiet helm.service 2>/dev/null && unit="active"
-  pid_is_live && process="running (pid $(<"$PID_FILE"))"
-  echo "helm: service=$unit process=$process bind=${HELM_BIND:-127.0.0.1}:${HELM_PORT:-7333}"
+  pid_is_live && process="running (pid $(pid_from_file))"
+  if read -r bind port < <(endpoint); then endpoint_text="$bind:$port"; fi
+  echo "helm: service=$unit process=$process bind=$endpoint_text"
   [[ "$unit" == "active" || "$process" == running* ]]
 }
 logs() { ensure_state_dir; [[ -f "$LOG_FILE" ]] && tail -n 200 "$LOG_FILE" || echo "helm: no service log at $LOG_FILE"; }
 install_service() {
-  local unit_dir="$HOME/.config/systemd/user" template temp
+  local unit_dir="$HOME/.config/systemd/user" template temp bind port linger_blocked=0
+  if ! read -r bind port < <(endpoint); then
+    echo "helm: refusing to install the service; the configuration is not usable" >&2; return 1
+  fi
   mkdir -p "$unit_dir"
   for template in "$HELM_ROOT/systemd/helm.service" "$HELM_ROOT/systemd/helm-logrotate.service" "$HELM_ROOT/systemd/helm-logrotate.timer"; do
     temp="$(mktemp)"
-    sed -e "s|@HELM_ROOT@|$HELM_ROOT|g" -e "s|@HELM_STATE_DIR@|$HELM_STATE_DIR|g" -e "s|@FM_HOME@|${FM_HOME:-$HOME/firstmate}|g" "$template" > "$temp"
+    sed -e "s|@HELM_ROOT@|$HELM_ROOT|g" -e "s|@HELM_STATE_DIR@|$HELM_STATE_DIR|g" -e "s|@FM_HOME@|${FM_HOME:-$HOME/firstmate}|g" \
+      -e "s|@HELM_BIND@|$bind|g" -e "s|@HELM_PORT@|$port|g" "$template" > "$temp"
     install -m 0644 "$temp" "$unit_dir/$(basename "$template")"; rm -f "$temp"
   done
-  systemctl --user daemon-reload; loginctl enable-linger "$(id -un)"; systemctl --user enable helm.service helm-logrotate.timer
-  echo "helm: installed user service; linger enabled; fallback if policy blocks linger: crontab -e then add '@reboot $HELM_ROOT/bin/helm start'"
+  systemctl --user daemon-reload
+  loginctl enable-linger "$(id -un)" || linger_blocked=1
+  systemctl --user enable helm.service helm-logrotate.timer
+  echo "helm: installed user service bound to $bind:$port; rerun install-service after changing HELM_BIND, HELM_PORT, or FM_HOME"
+  if (( linger_blocked == 1 )); then
+    echo "helm: linger was refused by local policy; fallback: crontab -e then add '@reboot $HELM_ROOT/bin/helm start'" >&2
+  else
+    echo "helm: linger enabled"
+  fi
 }
 case "${1:-}" in
   doctor) doctor ;; build) pnpm --dir "$HELM_ROOT" build ;; start) start ;; stop) stop ;; status) status ;;

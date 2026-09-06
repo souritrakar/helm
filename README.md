@@ -109,8 +109,9 @@ bin/helm stop
 bin/helm install-service
 ```
 
-The service uses the current `FM_HOME` during installation (or `~/firstmate` if it is unset), honors
-`HELM_BIND` and `HELM_PORT`, and writes its pid and rotating logs under
+`install-service` captures the current `FM_HOME` (or `~/firstmate` if it is unset) and the validated
+`HELM_BIND` and `HELM_PORT` into the generated unit, so rerun it after changing any of them. helm
+writes its pid and rotating logs under
 `${XDG_STATE_HOME:-~/.local/state}/helm`, never under `$FM_HOME`. `install-service` also installs an hourly
 user timer which retains five 10 MiB log archives. If local policy prevents lingering, the fallback is a
 `crontab @reboot` line: `@reboot /absolute/path/to/helm/bin/helm start`.
