@@ -1,9 +1,6 @@
-import { cookies } from "next/headers";
+import { TerminalPane } from "@/components/terminal-pane";
 
-import { HelmShell } from "@/components/helm-shell";
-import { parseSplitLayout, splitLayoutCookieName } from "@/components/split-layout";
-
-export default async function Home() {
-  const cookieStore = await cookies();
-  return <HelmShell defaultLayout={parseSplitLayout(cookieStore.get(splitLayoutCookieName)?.value)} />;
+/** Lane B deliberately owns only the terminal component; Lane F composes the shell. */
+export default function Home() {
+  return <main className="flex flex-1 min-h-0"><TerminalPane /></main>;
 }
