@@ -1,0 +1,7 @@
+endpoint_task_id=fleet-scout
+harness=claude
+kind=secondmate
+mode=local-only
+yolo=off
+spawn_gen=s1788566171.146855.23484
+backend=herdr
