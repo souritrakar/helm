@@ -564,7 +564,7 @@ export async function herdrDoctor(cfg: HelmConfig): Promise<HerdrDoctorResult> {
   if (result.exitCode !== 0) {
     problems.push(
       result.error !== null
-        ? `herdr not runnable as ${JSON.stringify(cfg.herdrBin)}: ${result.error}`
+        ? `herdr missing or not runnable as ${JSON.stringify(cfg.herdrBin)}: ${result.error}`
         : `could not read the Herdr API schema: ${describeFailure(result)}`,
     );
   } else {

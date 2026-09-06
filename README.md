@@ -95,6 +95,26 @@ and all freeform replies are relayed to firstmate instead. Every attempted route
 `$HELM_STATE_DIR/actions.jsonl`; answered and dismissed item ids persist in
 `$HELM_STATE_DIR/inbox-history.json` and are never automatically pruned.
 
+## Service operation
+
+`bin/helm` is the service entrypoint:
+
+```sh
+bin/helm doctor
+bin/helm build
+bin/helm start
+bin/helm status
+bin/helm logs
+bin/helm stop
+bin/helm install-service
+```
+
+The service uses the current `FM_HOME` during installation (or `~/firstmate` if it is unset), honors
+`HELM_BIND` and `HELM_PORT`, and writes its pid and rotating logs under
+`${XDG_STATE_HOME:-~/.local/state}/helm`, never under `$FM_HOME`. `install-service` also installs an hourly
+user timer which retains five 10 MiB log archives. If local policy prevents lingering, the fallback is a
+`crontab @reboot` line: `@reboot /absolute/path/to/helm/bin/helm start`.
+
 ## Layout
 
 | Path | What |

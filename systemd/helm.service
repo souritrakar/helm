@@ -1,0 +1,16 @@
+[Unit]
+Description=helm browser control and human inbox
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@HELM_ROOT@
+Environment=FM_HOME=@FM_HOME@
+Environment=HELM_STATE_DIR=@HELM_STATE_DIR@
+Environment=HELM_FOREGROUND=1
+ExecStart=@HELM_ROOT@/bin/helm start
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
