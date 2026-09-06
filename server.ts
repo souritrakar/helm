@@ -17,6 +17,7 @@
  * `pnpm build`). This file is not processed by the Next.js compiler.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import next from "next";
 import { WebSocketServer, WebSocket } from "ws";
 import { z } from "zod";
@@ -25,16 +26,48 @@ import { ConfigError, loadConfig } from "./src/lib/config";
 import { handleInboxHttp } from "./src/lib/inbox-http";
 import { createInboxRuntime } from "./src/lib/inbox-runtime";
 import { allowedHostsForBind } from "./src/lib/require-operator";
-import { paneRun, paneSendKeys } from "./src/lib/herdr";
+import { paneRun, paneSendKeys, type TerminalViewport } from "./src/lib/herdr";
 import { PaneDirectory, type PaneDiscovery } from "./src/lib/panes";
+import { isJsonRequest, isSameOrigin, requestedViewport } from "./src/lib/request";
 import { TerminalBridge } from "./src/lib/terminal-bridge";
 
-const inputSchema = z.object({ paneId: z.string().min(1), text: z.string().min(1).max(100_000), key: z.string().min(1).max(128).optional() });
+/**
+ * The bounded one-shot keys Converse mode may send.
+ *
+ * helm is a channel, not a keyboard: there is no raw keystream and no takeover.
+ * Each name maps to the Herdr key spelling (`esc` is Herdr's canonical Escape).
+ */
+const TERMINAL_KEYS = ["enter", "escape", "c-c"] as const;
+const HERDR_KEY_NAMES: Record<(typeof TERMINAL_KEYS)[number], string> = { enter: "enter", escape: "esc", "c-c": "C-c" };
+const paneIdSchema = z.string().min(1);
+
+/**
+ * Either one-shot text (`herdr pane run`, which appends Enter) or exactly one
+ * named key (`herdr pane send-keys`). Both together is ambiguous — the text
+ * would silently never be sent — so it is rejected rather than half-honoured.
+ */
+const inputSchema = z.union([
+  z.object({ paneId: paneIdSchema, text: z.string().min(1).max(100_000) }).strict(),
+  z.object({ paneId: paneIdSchema, key: z.enum(TERMINAL_KEYS) }).strict(),
+]);
+const INPUT_CONTRACT = `Terminal input must be {paneId, text} for one-shot text, or {paneId, key} where key is one of ${TERMINAL_KEYS.join(", ")}`;
+
+const colsSchema = z.number().int().min(2).max(500);
+const rowsSchema = z.number().int().min(2).max(300);
+const MAX_BODY_BYTES = 1_000_000;
+
 const clientMessageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("terminal.resize"), cols: z.number().int().min(2).max(500), rows: z.number().int().min(2).max(300) }),
-  z.object({ type: z.literal("terminal.select"), paneId: z.string().min(1) }),
+  z.object({ type: z.literal("terminal.resize"), cols: colsSchema, rows: rowsSchema }),
+  z.object({ type: z.literal("terminal.select"), paneId: paneIdSchema }),
   z.object({ type: z.literal("terminal.reconnect") }),
 ]);
+
+interface TerminalClientState {
+  readonly socket: WebSocket;
+  bridge: TerminalBridge | null;
+  selectedPaneId: string | null;
+  viewport: TerminalViewport;
+}
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -49,17 +82,45 @@ async function main(): Promise<void> {
   await app.prepare();
 
   let discovery: PaneDiscovery = { panes: [], defaultPaneId: null };
-  const clients = new Set<{ socket: WebSocket; bridge: TerminalBridge; selectedPaneId: string }>();
+  const clients = new Set<TerminalClientState>();
+
+  const attach = (client: TerminalClientState, paneId: string): void => {
+    client.selectedPaneId = paneId;
+    if (client.bridge === null) {
+      client.bridge = new TerminalBridge({ cfg: config, target: paneId, viewport: client.viewport, client: { send: (data) => { if (client.socket.readyState === WebSocket.OPEN) client.socket.send(data); } } });
+      client.bridge.start();
+      return;
+    }
+    client.bridge.select(paneId);
+  };
+  const detach = (client: TerminalClientState): void => {
+    client.bridge?.close();
+    client.bridge = null;
+    client.selectedPaneId = null;
+    sendJson(client.socket, { type: "terminal.status", status: "closed", reason: "No Herdr panes are available", reconnect: true });
+  };
+  const settle = (client: TerminalClientState): void => {
+    // A viewer whose pane vanished follows the default when one exists, and
+    // otherwise waits in a pane-closed state for an explicit reconnect.
+    if (client.selectedPaneId !== null && discovery.panes.some((pane) => pane.id === client.selectedPaneId)) return;
+    if (discovery.defaultPaneId !== null) attach(client, discovery.defaultPaneId);
+    else if (client.selectedPaneId !== null || client.bridge !== null) detach(client);
+  };
   const broadcastPanes = (): void => {
     for (const client of clients) {
-      if (!discovery.panes.some((pane) => pane.id === client.selectedPaneId) && discovery.defaultPaneId !== null) {
-        client.selectedPaneId = discovery.defaultPaneId;
-        client.bridge.select(discovery.defaultPaneId);
-      }
+      settle(client);
       sendJson(client.socket, { type: "terminal.panes", panes: discovery.panes, selectedPaneId: client.selectedPaneId });
     }
   };
-  const directory = new PaneDirectory(config, (nextDiscovery) => { discovery = nextDiscovery; broadcastPanes(); }, (error) => console.error(`helm pane discovery: ${error}`));
+  const broadcastNotice = (message: string): void => {
+    for (const client of clients) sendJson(client.socket, { type: "terminal.notice", message });
+  };
+  const directory = new PaneDirectory(config, (nextDiscovery) => { discovery = nextDiscovery; broadcastPanes(); }, (error) => {
+    // Discovery is degraded, not dead: the last-known pane list stands and the
+    // directory keeps retrying, so this is a notice rather than a teardown.
+    console.error(`helm pane discovery: ${error}`);
+    broadcastNotice(`Pane discovery is degraded: ${error}`);
+  });
   await directory.start();
 
   const server = createServer((req, res) => {
@@ -91,31 +152,46 @@ async function main(): Promise<void> {
   });
   const websocketServer = new WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
-    // Next owns development HMR upgrades (and future framework upgrades); only
-    // consume helm's explicit terminal endpoint.
-    if (new URL(request.url ?? "/", "http://localhost").pathname !== "/api/term") return;
-    websocketServer.handleUpgrade(request, socket, head, (websocket) => websocketServer.emit("connection", websocket));
+    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (pathname !== "/api/term") {
+      // Next attaches its own `upgrade` listener to this server on the first
+      // request it handles, and owns everything under `/_next` (development
+      // HMR). Nothing else has an owner, so close it rather than leaving a
+      // half-open socket to sit until its TCP timeout.
+      if (!pathname.startsWith("/_next/")) socket.destroy();
+      return;
+    }
+    if (!isSameOrigin(request.headers)) { rejectUpgrade(socket, 403, "Forbidden"); return; }
+    websocketServer.handleUpgrade(request, socket, head, (websocket) => websocketServer.emit("connection", websocket, request));
   });
-  websocketServer.on("connection", (socket) => {
-    const selectedPaneId = discovery.defaultPaneId;
-    if (selectedPaneId === null) { sendJson(socket, { type: "terminal.status", status: "closed", reason: "No Herdr panes are available", reconnect: true }); return; }
-    const bridge = new TerminalBridge({ cfg: config, target: selectedPaneId, viewport: { cols: 80, rows: 24 }, client: { send: (data) => { if (socket.readyState === WebSocket.OPEN) socket.send(data); } } });
-    const client = { socket, bridge, selectedPaneId };
+  websocketServer.on("connection", (socket: WebSocket, request: IncomingMessage) => {
+    const client: TerminalClientState = { socket, bridge: null, selectedPaneId: null, viewport: requestedViewport(request.url) };
     clients.add(client);
-    sendJson(socket, { type: "terminal.panes", panes: discovery.panes, selectedPaneId });
-    bridge.start();
+    // Registered before any bridge exists: a viewer that connects while no pane
+    // is available must still receive the pane list and reconnect when one
+    // appears, rather than holding a socket nothing ever speaks to.
     socket.on("message", (raw) => {
       let message: z.infer<typeof clientMessageSchema>;
       try { message = clientMessageSchema.parse(JSON.parse(raw.toString())); } catch { sendJson(socket, { type: "terminal.status", status: "closed", reason: "Invalid terminal message", reconnect: false }); return; }
-      if (message.type === "terminal.resize") bridge.resize(message);
-      if (message.type === "terminal.reconnect") bridge.reconnect();
+      if (message.type === "terminal.resize") {
+        client.viewport = { cols: message.cols, rows: message.rows };
+        client.bridge?.resize(client.viewport);
+      }
+      if (message.type === "terminal.reconnect") {
+        if (client.bridge !== null) client.bridge.reconnect();
+        else if (discovery.defaultPaneId !== null) attach(client, discovery.defaultPaneId);
+        else detach(client);
+      }
       if (message.type === "terminal.select") {
         if (!discovery.panes.some((pane) => pane.id === message.paneId)) { sendJson(socket, { type: "terminal.status", status: "closed", reason: "Unknown pane", reconnect: false }); return; }
-        client.selectedPaneId = message.paneId; bridge.select(message.paneId); broadcastPanes();
+        attach(client, message.paneId); broadcastPanes();
       }
     });
-    socket.on("close", () => { clients.delete(client); bridge.close(); });
+    socket.on("close", () => { clients.delete(client); client.bridge?.close(); client.bridge = null; });
     socket.on("error", () => undefined);
+    settle(client);
+    sendJson(socket, { type: "terminal.panes", panes: discovery.panes, selectedPaneId: client.selectedPaneId });
+    if (client.bridge === null) sendJson(socket, { type: "terminal.status", status: "closed", reason: "No Herdr panes are available", reconnect: true });
   });
 
   server.on("error", (cause: NodeJS.ErrnoException) => {
@@ -134,7 +210,7 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     inbox.stop();
     directory.close();
-    for (const client of clients) client.bridge.close();
+    for (const client of clients) client.bridge?.close();
     websocketServer.close();
     server.close(() => process.exit(0));
   };
@@ -142,19 +218,42 @@ async function main(): Promise<void> {
   process.on("SIGTERM", shutdown);
 }
 
+function rejectUpgrade(socket: Duplex, status: number, reason: string): void {
+  socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
+  socket.destroy();
+}
+
 async function handleInput(req: IncomingMessage, res: ServerResponse, config: ReturnType<typeof loadConfig>, knownPaneIds: () => ReadonlySet<string>): Promise<void> {
+  if (!isSameOrigin(req.headers)) { respondJson(res, 403, { error: "Cross-origin terminal input is refused" }); return; }
+  if (!isJsonRequest(req.headers)) { respondJson(res, 415, { error: "Terminal input must be sent as application/json" }); return; }
   try {
     const body = await readJsonBody(req);
     const input = inputSchema.parse(body);
     if (!knownPaneIds().has(input.paneId)) { respondJson(res, 404, { error: "Unknown pane" }); return; }
-    const result = input.key === undefined ? await paneRun(config, input.paneId, [input.text]) : await paneSendKeys(config, input.paneId, [input.key]);
+    const result = "key" in input
+      ? await paneSendKeys(config, input.paneId, [HERDR_KEY_NAMES[input.key]])
+      : await paneRun(config, input.paneId, [input.text]);
     if (result.exitCode !== 0 || result.stdinError !== null) { respondJson(res, 502, { error: result.stderr.trim() || result.error || "Herdr rejected terminal input" }); return; }
     respondJson(res, 200, { ok: true });
-  } catch (cause) { respondJson(res, 400, { error: cause instanceof Error ? cause.message : "Invalid terminal input" }); }
+  } catch (cause) { respondJson(res, 400, { error: cause instanceof z.ZodError ? INPUT_CONTRACT : cause instanceof Error ? cause.message : "Invalid terminal input" }); }
 }
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => { let body = ""; req.setEncoding("utf8"); req.on("data", (chunk: string) => { body += chunk; if (body.length > 1_000_000) reject(new Error("Request body is too large")); }); req.on("end", () => { try { resolve(JSON.parse(body)); } catch { reject(new Error("Request body must be JSON")); } }); req.on("error", reject); });
+  return new Promise((resolve, reject) => {
+    let body = "";
+    let overflowed = false;
+    req.setEncoding("utf8");
+    req.on("data", (chunk: string) => {
+      // Stop buffering once the limit is passed, rather than only rejecting: a
+      // client that keeps streaming would otherwise keep growing `body` after
+      // the 400 was sent. The stream is still drained so the 400 is delivered.
+      if (overflowed) return;
+      body += chunk;
+      if (body.length > MAX_BODY_BYTES) { overflowed = true; body = ""; reject(new Error("Request body is too large")); }
+    });
+    req.on("end", () => { try { resolve(JSON.parse(body)); } catch { reject(new Error("Request body must be JSON")); } });
+    req.on("error", reject);
+  });
 }
 function respondJson(res: ServerResponse, status: number, value: unknown): void { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); }
 function sendJson(socket: WebSocket, value: unknown): void { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)); }
