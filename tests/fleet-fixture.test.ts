@@ -38,8 +38,9 @@ describe.skipIf(SKIP_FM_CONTRACT)("fleet-snapshot.v1.json is what the real seam 
     cpSync(join(FIXTURES, "fleet-home", "backlog.md"), join(home, "data", "backlog.md"), {
       recursive: true,
     });
-    // age_seconds is the snapshot clock minus a status file's mtime, and cpSync
-    // stamps mtime at copy time. Pin both ends so the age is the same every run.
+    // cpSync stamps mtime at copy time, so pin it to give the replay the same
+    // input every run. The snapshot clock is real wall time here; the
+    // comparison handles it by stripping the clock fields on both sides.
     for (const entry of readdirSync(join(home, "state"))) {
       utimesSync(join(home, "state", entry), FIXTURE_NOW_EPOCH, FIXTURE_NOW_EPOCH);
     }

@@ -81,13 +81,29 @@ describe("captainHoldAnswers", () => {
   });
 
   it.each([
-    ["answer", { ...answer, answer: "a".repeat(513) }, { source: "helm" }],
-    ["label", { ...answer, label: "l".repeat(513) }, { source: "helm" }],
-    ["source", answer, { source: "s".repeat(513) }],
-  ])("rejects an over-512-character %s without truncating it", async (_field, row, options) => {
+    ["an ASCII answer", { ...answer, answer: "a".repeat(513) }, { source: "helm" }],
+    ["an ASCII label", { ...answer, label: "l".repeat(513) }, { source: "helm" }],
+    ["an ASCII source", answer, { source: "s".repeat(513) }],
+    // `cut -c` counts bytes, so these are under 512 code units and still cut.
+    ["a multi-byte answer", { ...answer, answer: "\u3042".repeat(200) }, { source: "helm" }],
+    ["a multi-byte label", { ...answer, label: "\u3042".repeat(200) }, { source: "helm" }],
+    ["a multi-byte source", answer, { source: "\u3042".repeat(200) }],
+    ["a prose answer of 511 ASCII characters plus an em dash", { ...answer, answer: `${"a".repeat(511)}\u2014` }, { source: "helm" }],
+  ])("rejects %s over the intake's 512-byte cut without truncating it", async (_field, row, options) => {
     await expect(captainHoldAnswers(CONFIG, [row], options)).rejects.toThrow(
-      /at most 512 characters; helm does not truncate captain answers/,
+      /cuts every field at 512 bytes/,
     );
+  });
+
+  it("accepts an answer whose control characters the intake deletes before the cut", async () => {
+    const result = await captainHoldAnswers(
+      CONFIG,
+      [{ ...answer, answer: `${"a".repeat(512)}${"\u0007".repeat(64)}` }],
+      { source: "helm" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.argv[0]).toBe("/fixture/firstmate/bin/fm-captain-hold.sh");
   });
 
   it.each([

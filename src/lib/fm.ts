@@ -400,19 +400,23 @@ export async function sendResolveKey(
  */
 const CAPTAIN_HOLD_KEY_MAX = 128;
 
-/** Maximum size for captain-hold freeform fields; they are never truncated. */
-const CAPTAIN_HOLD_FREEFORM_MAX = 512;
+/**
+ * The `cut -c1-512` in `fm-captain-hold.sh`'s `sanitize_field`. GNU coreutils
+ * counts `-c` in BYTES, and the cut runs AFTER the control-character strip, so
+ * helm measures the sanitized value in bytes at the same stage.
+ */
+const CAPTAIN_HOLD_FREEFORM_MAX_BYTES = 512;
 
 /**
  * `sanitize_field` as `fm-captain-hold.sh` applies it: tab, newline, and
  * carriage return become spaces, C0 controls and DEL are deleted.
  *
- * helm mirrors it only to predict an answer the intake would reduce to nothing
- * and then drop without a word. It never rewrites the answer it sends.
+ * helm mirrors it only to predict a field the intake would reduce to nothing or
+ * cut short, and then refuses. It never rewrites the answer it sends, because
+ * helm is the audit record for a captain answer (SPEC 5.5).
  */
-function sanitizesToEmpty(value: string): boolean {
-  const stripped = value.replace(/[\n\r\t]/g, " ").replace(/[\u0000-\u001f\u007f]/g, "");
-  return stripped === "";
+function sanitizeIntakeField(value: string): string {
+  return value.replace(/[\n\r\t]/g, " ").replace(/[\u0000-\u001f\u007f]/g, "");
 }
 
 /** One line for the keyed-answer intake. */
@@ -459,7 +463,7 @@ export async function captainHoldAnswers(
     requireCaptainHoldFreeform("answer", answer.answer);
     requireCaptainHoldFreeform("label", answer.label);
     requireIntakeKey(answer.taskId);
-    if (sanitizesToEmpty(answer.answer)) {
+    if (sanitizeIntakeField(answer.answer) === "") {
       throw new FmContractError(
         `answer for ${JSON.stringify(answer.taskId)} has no content the intake would keep; fm-captain-hold.sh strips control characters and then drops the row without a word`,
       );
@@ -592,9 +596,10 @@ function requireSingleLineField(label: string, value: string): void {
 
 function requireCaptainHoldFreeform(label: string, value: string): void {
   requireSingleLineField(label, value);
-  if (value.length > CAPTAIN_HOLD_FREEFORM_MAX) {
+  const bytes = new TextEncoder().encode(sanitizeIntakeField(value)).length;
+  if (bytes > CAPTAIN_HOLD_FREEFORM_MAX_BYTES) {
     throw new FmContractError(
-      `${label} must be at most ${CAPTAIN_HOLD_FREEFORM_MAX} characters; helm does not truncate captain answers`,
+      `${label} is ${bytes} bytes once fm-captain-hold.sh strips control characters, and its intake cuts every field at ${CAPTAIN_HOLD_FREEFORM_MAX_BYTES} bytes. Shorten ${label} and send it again. helm refuses the answer instead of recording a truncated one. Each non-ASCII character costs more than one byte.`,
     );
   }
 }
