@@ -16,8 +16,10 @@ scripts and `herdr` commands — the same commands the operator would type. It w
 
 ## Status
 
-Lane A (foundation and contracts) only. The terminal bridge, the inbox store, the adapters, the
-responder, the UI, and the service wrapper are later lanes.
+Lane A (foundation and contracts) and Lane F (the UI shell) are built. The shell renders fixture
+data only. Cards, options, and freeform input keep local component state and deliver no answer.
+The terminal bridge, the inbox store, the adapters, the responder, and the service wrapper are
+later lanes.
 
 ## Requirements
 
@@ -64,6 +66,7 @@ long-lived WebSocket carrying a terminal stream, which cannot live in a Next.js 
 
 | Path | What |
 | --- | --- |
+| `src/components/` | The UI shell (`helm-shell.tsx`), the split-size cookie, and the shadcn primitives. |
 | `src/lib/types.ts` | `InboxItem`, `InboxAdapter`, `RespondResult` — the contracts every lane imports. |
 | `src/lib/herdr.ts` | The single place any Herdr access lives: terminal observer, pane commands, discovery, `events.subscribe`, capability check. |
 | `src/lib/fm.ts` | Typed argv wrappers over the firstmate seams, each schema-validated. |
