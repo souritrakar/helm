@@ -17,14 +17,9 @@ export const FIXTURE_HOME = "/fixture/firstmate";
 export const FIXTURE_FM_ROOT = "/fixture/firstmate-root";
 
 /**
- * The instant a recording is made at.
- *
- * `fm-fleet-snapshot.sh` honours `FM_SNAPSHOT_NOW` / `FM_SNAPSHOT_NOW_EPOCH`,
- * so pinning both makes `generated`, `observed_at`, and every `age_seconds`
- * (SNAPSHOT_EPOCH minus the status file's mtime) the same on every run.
+ * The fixture status-file mtime used to exercise `age_seconds`.
  */
-export const FIXTURE_NOW = "2026-09-04T23:56:43Z";
-export const FIXTURE_NOW_EPOCH = Math.trunc(Date.parse(FIXTURE_NOW) / 1000);
+export const FIXTURE_NOW_EPOCH = Math.trunc(Date.parse("2026-09-04T23:56:43Z") / 1000);
 
 /**
  * Locate a real firstmate `bin/`.
@@ -64,10 +59,9 @@ export function requireFirstmateBin(bin: string | null): asserts bin is string {
 /**
  * The environment a seam replay runs under.
  *
- * `fm-fleet-snapshot.sh` resolves its roots from `FM_*_OVERRIDE` and its bounds
- * from `FM_SNAPSHOT_*`, so an ambient export in the shell running the suite
- * would redirect the replay at the LIVE state directory or change the emitted
- * document. Every one of those is dropped or pinned here.
+ * `fm-fleet-snapshot.sh` resolves its roots from `FM_*_OVERRIDE` and reads
+ * bounds from `FM_SNAPSHOT_*`. Drop ambient overrides so the replay uses the
+ * seam's actual defaults rather than a stale test-owned re-addition.
  */
 export function seamEnv(home: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -77,9 +71,6 @@ export function seamEnv(home: string): NodeJS.ProcessEnv {
   return {
     ...env,
     FM_HOME: home,
-    FM_SNAPSHOT_NOW: FIXTURE_NOW,
-    FM_SNAPSHOT_NOW_EPOCH: String(FIXTURE_NOW_EPOCH),
-    ...SNAPSHOT_BOUNDS,
   };
 }
 
@@ -91,34 +82,10 @@ const FM_ROOT_OVERRIDES = new Set([
   "FM_PROJECTS_OVERRIDE",
 ]);
 
-/** The seam's own defaults, pinned so a recording cannot shift underneath it. */
-const SNAPSHOT_BOUNDS: Readonly<Record<string, string>> = {
-  FM_SNAPSHOT_SECONDMATES: "20",
-  FM_SNAPSHOT_SECONDMATE_TIMEOUT: "8",
-  FM_SNAPSHOT_CREW_STATE_TIMEOUT: "10",
-  FM_SNAPSHOT_SECONDMATE_MAX_BYTES: "262144",
-  FM_SNAPSHOT_SECONDMATE_CHILDREN: "20",
-  FM_SNAPSHOT_SECONDMATE_QUEUED: "20",
-  FM_SNAPSHOT_SECONDMATE_DECISIONS: "20",
-  FM_SNAPSHOT_TERMINAL_LINES: "8",
-  FM_SNAPSHOT_TERMINAL_BYTES: "4096",
-  FM_SNAPSHOT_TERMINAL_TIMEOUT: "2",
-  FM_SNAPSHOT_PARENT_ACTIVITY_LINES: "256",
-  FM_SNAPSHOT_PARENT_ACTIVITY_BYTES: "65536",
-  FM_SNAPSHOT_PARENT_ACTIVITIES: "20",
-  FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT: "2",
-  FM_SNAPSHOT_REGISTRY_LINES: "256",
-  FM_SNAPSHOT_REGISTRY_BYTES: "65536",
-  FM_SNAPSHOT_REGISTRY_RECORDS: "40",
-  FM_SNAPSHOT_REGISTRY_TIMEOUT: "2",
-};
-
 /**
  * Replace the two paths that differ between machines: the home the seam was
  * invoked against, and the firstmate checkout the script resolved itself from
- * (`roots.fm_root`, taken from the script's own location). The clock is pinned
- * at the source through {@link FIXTURE_NOW}, so no timestamp is rewritten here
- * and every derived field is compared verbatim.
+ * (`roots.fm_root`, taken from the script's own location).
  */
 export function normalizeSnapshot(document: unknown, home: string, fmRoot: string): unknown {
   const json = JSON.stringify(document)

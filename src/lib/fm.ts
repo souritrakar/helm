@@ -331,7 +331,7 @@ export async function scanOpenDecisions(cfg: HelmConfig): Promise<OpenDecision[]
     "helm-scan-open-decisions",
     library,
     cfg.fmStateDir,
-  ]);
+  ], { timeoutMs: SNAPSHOT_TIMEOUT_MS });
   if (result.exitCode !== 0) {
     throw new FmContractError(`scan_open_decisions failed: ${describeFailure(result)}`);
   }
@@ -400,6 +400,9 @@ export async function sendResolveKey(
  */
 const CAPTAIN_HOLD_KEY_MAX = 128;
 
+/** Maximum size for captain-hold freeform fields; they are never truncated. */
+const CAPTAIN_HOLD_FREEFORM_MAX = 512;
+
 /**
  * `sanitize_field` as `fm-captain-hold.sh` applies it: tab, newline, and
  * carriage return become spaces, C0 controls and DEL are deleted.
@@ -449,12 +452,12 @@ export async function captainHoldAnswers(
   if (answers.length === 0) {
     throw new FmContractError("captainHoldAnswers: at least one answer is required");
   }
-  requireSingleLineField("source", options.source);
+  requireCaptainHoldFreeform("source", options.source);
   const lines = answers.map((answer) => {
     // A tab or newline in any field would forge extra intake lines.
     requireSingleLineField("taskId", answer.taskId);
-    requireSingleLineField("answer", answer.answer);
-    requireSingleLineField("label", answer.label);
+    requireCaptainHoldFreeform("answer", answer.answer);
+    requireCaptainHoldFreeform("label", answer.label);
     requireIntakeKey(answer.taskId);
     if (sanitizesToEmpty(answer.answer)) {
       throw new FmContractError(
@@ -583,6 +586,15 @@ function requireSingleLineField(label: string, value: string): void {
   if (value.includes("\t") || value.includes("\n")) {
     throw new FmContractError(
       `${label} must not contain a tab or newline; those separate intake fields and records`,
+    );
+  }
+}
+
+function requireCaptainHoldFreeform(label: string, value: string): void {
+  requireSingleLineField(label, value);
+  if (value.length > CAPTAIN_HOLD_FREEFORM_MAX) {
+    throw new FmContractError(
+      `${label} must be at most ${CAPTAIN_HOLD_FREEFORM_MAX} characters; helm does not truncate captain answers`,
     );
   }
 }

@@ -60,7 +60,7 @@ describe.skipIf(SKIP_FM_CONTRACT)("fleet-snapshot.v1.json is what the real seam 
       readFileSync(join(FIXTURES, "fleet-snapshot.v1.json"), "utf8"),
     ) as unknown;
 
-    expect(emitted).toEqual(recorded);
+    expect(withoutSnapshotClock(emitted)).toEqual(withoutSnapshotClock(recorded));
   });
 
   it("parses under the schemas helm reads, so the recording proves the contract", () => {
@@ -72,3 +72,20 @@ describe.skipIf(SKIP_FM_CONTRACT)("fleet-snapshot.v1.json is what the real seam 
     ]);
   });
 });
+
+/**
+ * The seam owns these clock-derived fields. `seamEnv` deliberately strips
+ * `FM_SNAPSHOT_*`, so this replay uses the seam's current defaults instead of
+ * re-adding a stale fixed clock. Everything else remains an exact recording
+ * comparison, including all producer-derived structure and values.
+ */
+function withoutSnapshotClock(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutSnapshotClock);
+  if (value === null || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "generated" && key !== "observed_at" && key !== "age_seconds")
+      .map(([key, child]) => [key, withoutSnapshotClock(child)]),
+  );
+}

@@ -81,6 +81,16 @@ describe("captainHoldAnswers", () => {
   });
 
   it.each([
+    ["answer", { ...answer, answer: "a".repeat(513) }, { source: "helm" }],
+    ["label", { ...answer, label: "l".repeat(513) }, { source: "helm" }],
+    ["source", answer, { source: "s".repeat(513) }],
+  ])("rejects an over-512-character %s without truncating it", async (_field, row, options) => {
+    await expect(captainHoldAnswers(CONFIG, [row], options)).rejects.toThrow(
+      /at most 512 characters; helm does not truncate captain answers/,
+    );
+  });
+
+  it.each([
     ["outside the intake alphabet", "webface plan"],
     ["a slash the intake alphabet excludes", "webface/plan"],
     ["longer than the intake's 128-character limit", "w".repeat(129)],
