@@ -250,6 +250,31 @@ describe("inbox notification stream", () => {
     expect(showNotification).not.toHaveBeenCalled();
   });
 
+  it("remints and replays the latest visibility report after a rejected session", async () => {
+    cleanup();
+    let postCount = 0;
+    const fetchMock = vi.fn((_: unknown, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        postCount += 1;
+        return Promise.resolve({ ok: postCount > 1, status: postCount === 1 ? 403 : 200 });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: `session:${postCount + 1}` }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/inbox/visibility", expect.objectContaining({
+      headers: expect.objectContaining({ "X-Helm-Visibility-Session": "session:1" }),
+      body: expect.stringContaining('"sequence":0'),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(4, "/api/inbox/visibility", expect.objectContaining({
+      headers: expect.objectContaining({ "X-Helm-Visibility-Session": "session:2" }),
+      body: expect.stringContaining('"sequence":0'),
+    }));
+  });
+
   it("delivers only the current occurrence after a pending worker becomes active", async () => {
     let resolveReady: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
     Object.defineProperty(navigator, "serviceWorker", {

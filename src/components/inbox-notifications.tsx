@@ -111,29 +111,65 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
 
   useEffect(() => {
     let cancelled = false;
-    let sequence = 0;
-    const session = fetch("/api/inbox/visibility")
-      .then(async (response) => {
+    let session: string | null = null;
+    let sessionSequence = 0;
+    let latestReport: { readonly active: boolean; readonly itemIds: string[] } | null = null;
+    let reportVersion = 0;
+    let sentVersion = 0;
+    let flushing = false;
+
+    const createSession = async (): Promise<string | null> => {
+      try {
+        const response = await fetch("/api/inbox/visibility");
         if (!response.ok) return null;
         const body: unknown = await response.json();
         return typeof body === "object" && body !== null && typeof (body as { token?: unknown }).token === "string"
           ? (body as { token: string }).token
           : null;
-      })
-      .catch(() => null);
+      } catch {
+        return null;
+      }
+    };
+
+    const flush = async (): Promise<void> => {
+      if (flushing) return;
+      flushing = true;
+      while (!cancelled && sentVersion !== reportVersion && latestReport !== null) {
+        if (session === null) {
+          session = await createSession();
+          sessionSequence = 0;
+          if (session === null) break;
+        }
+        const version = reportVersion;
+        const report = latestReport;
+        try {
+          const response = await fetch("/api/inbox/visibility", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Helm-Visibility-Session": session },
+            body: JSON.stringify({ sequence: sessionSequence++, ...report }),
+          });
+          if (response.status === 403) {
+            session = null;
+            continue;
+          }
+          sentVersion = version;
+        } catch {
+          sentVersion = version;
+        }
+      }
+      flushing = false;
+    };
+
     const report = () => {
-      void session.then((token) => {
-        if (cancelled || token === null) return;
-        // Live item ids are observed when Lane H renders store cards into this shell.
-        const itemIds = [...document.querySelectorAll<HTMLElement>("[data-inbox-item-id]")]
+      // Live item ids are observed when Lane H renders store cards into this shell.
+      latestReport = {
+        active: document.visibilityState === "visible" && document.hasFocus(),
+        itemIds: [...document.querySelectorAll<HTMLElement>("[data-inbox-item-id]")]
           .filter((element) => itemIsVisible(element.dataset.inboxItemId ?? ""))
-          .map((element) => element.dataset.inboxItemId ?? "");
-        void fetch("/api/inbox/visibility", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Helm-Visibility-Session": token },
-          body: JSON.stringify({ sequence: sequence++, active: document.visibilityState === "visible" && document.hasFocus(), itemIds }),
-        });
-      });
+          .map((element) => element.dataset.inboxItemId ?? ""),
+      };
+      reportVersion += 1;
+      void flush();
     };
     report();
     const timer = window.setInterval(report, 5_000);
