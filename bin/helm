@@ -6,7 +6,16 @@ readonly HELM_STATE_DIR="${HELM_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}
 readonly PID_FILE="$HELM_STATE_DIR/helm.pid"
 readonly LOG_FILE="$HELM_STATE_DIR/helm.log"
 usage() { echo "usage: bin/helm {doctor|build|start|stop|status|logs|install-service}" >&2; }
-ensure_state_dir() { mkdir -p "$HELM_STATE_DIR"; }
+state_config() { pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-state-config.ts"; }
+validate_state_dir() {
+  local configured
+  configured="$(state_config)" || return 1
+  if [[ "$configured" != "$HELM_STATE_DIR" ]]; then
+    echo "helm: refusing state directory $HELM_STATE_DIR; validated configuration selected $configured" >&2
+    return 1
+  fi
+}
+ensure_state_dir() { validate_state_dir; mkdir -p "$HELM_STATE_DIR"; }
 # /proc/<pid>/stat field <n>, counted as procfs numbers them; comm may contain spaces.
 proc_field() {
   local stat
@@ -32,7 +41,7 @@ signal_target() {
   pgrp="$(proc_field "$1" 5)" || { printf '%s\n' "$1"; return 0; }
   if [[ "$pgrp" == "$1" ]]; then printf -- '-%s\n' "$1"; else printf '%s\n' "$1"; fi
 }
-remove_stale_pid() { [[ -e "$PID_FILE" ]] && ! pid_is_live && rm -f "$PID_FILE" || true; }
+remove_stale_pid() { validate_state_dir; [[ -e "$PID_FILE" ]] && ! pid_is_live && rm -f "$PID_FILE" || true; }
 rotate_logs() {
   ensure_state_dir
   local max_bytes=$((10 * 1024 * 1024)) index

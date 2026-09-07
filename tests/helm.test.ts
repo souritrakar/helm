@@ -33,7 +33,10 @@ describe("helm launcher", () => {
     const commands = join(directory, "bin");
     const state = join(directory, "state");
     mkdirSync(commands); mkdirSync(state);
-    writeCommand(commands, "pnpm", `if [[ "$1" == "--dir" && "$2" == "${root}" && "$3" == "start" ]]; then exec sleep 30; fi`);
+    writeCommand(commands, "pnpm", [
+      'if [[ "$*" == *"helm-state-config.ts"* ]]; then printf "%s\\n" "$HELM_STATE_DIR"; exit 0; fi',
+      `if [[ "$1" == "--dir" && "$2" == "${root}" && "$3" == "start" ]]; then exec sleep 30; fi`,
+    ].join("\n"));
     const child = spawn(join(root, "bin/helm"), ["start"], {
       env: { ...process.env, PATH: `${commands}:${process.env.PATH}`, HELM_FOREGROUND: "1", HELM_STATE_DIR: state },
     });
@@ -118,6 +121,7 @@ describe("helm launcher", () => {
     const address = foreign.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
     const port = address.port;
     writeCommand(commands, "pnpm", [
+      'if [[ "$*" == *"helm-state-config.ts"* ]]; then printf "%s\\n" "$HELM_STATE_DIR"; exit 0; fi',
       'if [[ "$*" == *"helm-doctor.ts"* ]]; then exit 0; fi',
       'if [[ "$*" == *"helm-endpoint.ts"* ]]; then printf "127.0.0.1 ' + String(port) + '\\n"; exit 0; fi',
       'if [[ "$*" == *"helm-endpoint-owner.ts"* ]]; then exit 1; fi',
@@ -135,6 +139,34 @@ describe("helm launcher", () => {
     } finally {
       await new Promise<void>((resolve) => foreign.close(() => resolve()));
     }
+  });
+
+  it("refuses FM_HOME state before creating or cleaning it", () => {
+    const directory = workspace();
+    const fmHome = join(directory, "firstmate");
+    const state = join(fmHome, "helm-state");
+    mkdirSync(join(fmHome, "bin"), { recursive: true });
+    mkdirSync(join(fmHome, "state"));
+    const start = spawnSync(join(root, "bin/helm"), ["start"], {
+      encoding: "utf8",
+      env: { ...process.env, FM_HOME: fmHome, HELM_STATE_DIR: state },
+    });
+
+    expect(start.status).toBe(1);
+    expect(start.stderr).toContain("must not be equal to or under FM_HOME");
+    expect(existsSync(state)).toBe(false);
+
+    mkdirSync(state);
+    const pidFile = join(state, "helm.pid");
+    writeFileSync(pidFile, "999999 0\n");
+    const status = spawnSync(join(root, "bin/helm"), ["status"], {
+      encoding: "utf8",
+      env: { ...process.env, FM_HOME: fmHome, HELM_STATE_DIR: state },
+    });
+
+    expect(status.status).toBe(1);
+    expect(status.stderr).toContain("must not be equal to or under FM_HOME");
+    expect(existsSync(pidFile)).toBe(true);
   });
 });
 
