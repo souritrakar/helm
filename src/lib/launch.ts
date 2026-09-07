@@ -107,7 +107,7 @@ export async function launchDoctor(
     if (portProbe.code !== "EADDRINUSE" || owner === undefined) {
       problems.push(describePortProblem(config, portProbe.code));
     } else {
-      const listeners = listenerPids(config);
+      const listeners = await listenerPids(config);
       portHeldByHelm = listeners.some((pid) => belongsToProcessGroup(pid, owner));
       if (!portHeldByHelm) problems.push(describeForeignListener(config, owner, listeners));
     }

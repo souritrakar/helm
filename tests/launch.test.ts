@@ -34,8 +34,14 @@ describe("launch checks", () => {
     server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "0.0.0.0", resolve));
     const address = server.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
 
-    expect(listenerPids({ bind: "0.0.0.0", port: address.port })).toContain(process.pid);
-    expect(listenerPids({ bind: "127.0.0.1", port: address.port })).not.toContain(process.pid);
+    await expect(listenerPids({ bind: "0.0.0.0", port: address.port })).resolves.toContain(process.pid);
+    await expect(listenerPids({ bind: "127.0.0.1", port: address.port })).resolves.not.toContain(process.pid);
+  });
+  it("resolves a hostname before matching its listener", async () => {
+    server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "localhost", resolve));
+    const address = server.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
+
+    await expect(listenerPids({ bind: "localhost", port: address.port })).resolves.toContain(process.pid);
   });
   it("accepts a busy endpoint only when the claimed instance is the real listener", async () => {
     server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
@@ -74,9 +80,9 @@ describe("launch checks", () => {
     try {
       const doctor = await launchDoctor(endpointConfig(address.port), { portOwnerPid: process.pid });
 
-      expect(listenerPids(endpointConfig(address.port))).toContain(neighbour.pid);
-      expect(listenerPids(endpointConfig(address.port))).not.toContain(process.pid);
-      expect(listenerPids({ bind: "127.0.0.2", port: address.port })).toContain(process.pid);
+      await expect(listenerPids(endpointConfig(address.port))).resolves.toContain(neighbour.pid);
+      await expect(listenerPids(endpointConfig(address.port))).resolves.not.toContain(process.pid);
+      await expect(listenerPids({ bind: "127.0.0.2", port: address.port })).resolves.toContain(process.pid);
       expect(doctor.portHeldByHelm).toBe(false);
       expect(doctor.problems.join(" ")).toContain("not by the running helm instance");
     } finally {

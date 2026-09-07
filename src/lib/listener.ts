@@ -6,6 +6,7 @@
  * healthy. Linux only, like the rest of the launcher; an unreadable procfs
  * yields "unknown", which the caller reports rather than assumes away.
  */
+import { lookup } from "node:dns/promises";
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
 
 import type { HelmEndpoint } from "./config";
@@ -20,8 +21,8 @@ const SOCKET_LINK = /^socket:\[(\d+)]$/;
  * configured local address too, so a helm socket on another address cannot
  * vouch for a foreign process that owns the configured endpoint.
  */
-export function listenerPids(endpoint: HelmEndpoint): number[] {
-  const inodes = listeningInodes(endpoint);
+export async function listenerPids(endpoint: HelmEndpoint): Promise<number[]> {
+  const inodes = await listeningInodes(endpoint);
   if (inodes.size === 0) return [];
   return processIds().filter((pid) => ownsAnyInode(pid, inodes));
 }
@@ -37,11 +38,9 @@ export function belongsToProcessGroup(pid: number, leader: number): boolean {
   return pid === leader || processGroupId(pid) === leader;
 }
 
-function listeningInodes(endpoint: HelmEndpoint): Set<string> {
+async function listeningInodes(endpoint: HelmEndpoint): Promise<Set<string>> {
   const inodes = new Set<string>();
-  for (const table of ["/proc/net/tcp", "/proc/net/tcp6"]) {
-    const address = procAddress(endpoint.bind, table);
-    if (address === null) continue;
+  for (const { table, address } of await procAddresses(endpoint.bind)) {
     for (const line of readText(table).split("\n").slice(1)) {
       const fields = line.trim().split(/\s+/);
       if (fields.length < 10 || fields[3] !== LISTEN_STATE) continue;
@@ -55,9 +54,25 @@ function listeningInodes(endpoint: HelmEndpoint): Set<string> {
   return inodes;
 }
 
-function procAddress(bind: string, table: string): string | null {
-  if (table.endsWith("tcp")) return ipv4ProcAddress(bind);
-  return ipv6ProcAddress(bind);
+interface ProcAddress {
+  readonly table: "/proc/net/tcp" | "/proc/net/tcp6";
+  readonly address: string;
+}
+
+async function procAddresses(bind: string): Promise<ProcAddress[]> {
+  const ipv4 = ipv4ProcAddress(bind);
+  if (ipv4 !== null) return [{ table: "/proc/net/tcp", address: ipv4 }];
+  const ipv6 = ipv6ProcAddress(bind);
+  if (ipv6 !== null) return [{ table: "/proc/net/tcp6", address: ipv6 }];
+  try {
+    const resolved = await lookup(bind, { verbatim: true });
+    const address = resolved.family === 4 ? ipv4ProcAddress(resolved.address) : ipv6ProcAddress(resolved.address);
+    return address === null
+      ? []
+      : [{ table: resolved.family === 4 ? "/proc/net/tcp" : "/proc/net/tcp6", address }];
+  } catch {
+    return [];
+  }
 }
 
 function ipv4ProcAddress(bind: string): string | null {
