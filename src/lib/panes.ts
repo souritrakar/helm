@@ -1,7 +1,7 @@
 /** Discovery and event-driven refresh of the panes helm may mirror. */
 import type { HelmConfig } from "./config";
 import { fleetSnapshot, type FleetTask } from "./fm";
-import { agentList, paneList, subscribeEvents, type HerdrEventStream, type HerdrPane } from "./herdr";
+import { agentList, paneList, subscribeEvents, type HerdrEvent, type HerdrEventStream, type HerdrPane } from "./herdr";
 
 export interface DiscoverablePane {
   readonly id: string;
@@ -30,8 +30,11 @@ const REFRESH_DEBOUNCE_MS = 100;
 const RETRY_INTERVAL_MS = 5_000;
 
 export async function discoverPanes(cfg: HelmConfig): Promise<PaneDiscovery> {
-  const [agents, panes, snapshot] = await Promise.all([agentList(cfg), paneList(cfg), fleetSnapshot(cfg)]);
-  return crossReferencePanes(panes, new Set(agents.map((agent) => agent.pane_id)), snapshot.tasks, cfg.fmHome);
+  const [agents, panes, snapshot] = await Promise.allSettled([agentList(cfg), paneList(cfg), fleetSnapshot(cfg)]);
+  if (agents.status === "rejected") throw agents.reason;
+  if (panes.status === "rejected") throw panes.reason;
+  if (snapshot.status === "rejected") throw snapshot.reason;
+  return crossReferencePanes(panes.value, new Set(agents.value.map((agent) => agent.pane_id)), snapshot.value.tasks, cfg.fmHome);
 }
 
 /**
@@ -102,6 +105,7 @@ export class PaneDirectory {
   #retry: NodeJS.Timeout | null = null;
   #refreshing: Promise<void> | null = null;
   #refreshAgain = false;
+  #discovery: PaneDiscovery | null = null;
   #closed = false;
   constructor(readonly cfg: HelmConfig, readonly onUpdate: (value: PaneDiscovery) => void, readonly onError: (message: string) => void) {}
 
@@ -147,6 +151,7 @@ export class PaneDirectory {
     try {
       const discovery = await discoverPanes(this.cfg);
       if (this.#closed) return;
+      this.#discovery = discovery;
       this.onUpdate(discovery);
       this.#subscribeStatuses(discovery.panes);
     } catch (cause) {
@@ -166,12 +171,10 @@ export class PaneDirectory {
     if (this.#closed || this.#stream !== null) return;
     const stream = subscribeEvents(this.cfg, [{ type: "pane.created" }, { type: "pane.closed" }], () => this.#refreshLater());
     this.#stream = stream;
-    // `closed` rejects on every transport failure, including one that also
-    // rejects `ready`, so one handler covers both without reporting twice.
-    void stream.closed.catch((cause: unknown) => {
-      if (this.#stream === stream) this.#stream = null;
-      this.#failed(cause);
-    });
+    void stream.closed.then(
+      () => this.#streamEnded(stream, "pane event stream closed"),
+      (cause: unknown) => this.#streamFailed(stream, cause),
+    );
   }
 
   #subscribeStatuses(panes: readonly DiscoverablePane[]): void {
@@ -185,15 +188,47 @@ export class PaneDirectory {
     this.#statusStream = null;
     this.#statusKey = key;
     if (panes.length === 0) return;
-    const stream = subscribeEvents(this.cfg, panes.map((pane) => ({ type: "pane.agent_status_changed" as const, pane_id: pane.id })), () => this.#refreshLater());
+    const stream = subscribeEvents(this.cfg, panes.map((pane) => ({ type: "pane.agent_status_changed" as const, pane_id: pane.id })), (event) => this.#updateStatus(event));
     this.#statusStream = stream;
-    void stream.closed.catch((cause: unknown) => {
-      if (this.#statusStream === stream) {
-        this.#statusStream = null;
-        this.#statusKey = "";
-      }
-      this.#failed(cause);
-    });
+    void stream.closed.then(
+      () => this.#statusStreamEnded(stream, "pane status stream closed"),
+      (cause: unknown) => this.#statusStreamFailed(stream, cause),
+    );
+  }
+
+  #streamEnded(stream: HerdrEventStream, reason: string): void {
+    if (this.#stream !== stream) return;
+    this.#stream = null;
+    this.#failed(new Error(reason));
+  }
+
+  #streamFailed(stream: HerdrEventStream, cause: unknown): void {
+    if (this.#stream !== stream) return;
+    this.#stream = null;
+    this.#failed(cause);
+  }
+
+  #statusStreamEnded(stream: HerdrEventStream, reason: string): void {
+    if (this.#statusStream !== stream) return;
+    this.#statusStream = null;
+    this.#statusKey = "";
+    this.#failed(new Error(reason));
+  }
+
+  #statusStreamFailed(stream: HerdrEventStream, cause: unknown): void {
+    if (this.#statusStream !== stream) return;
+    this.#statusStream = null;
+    this.#statusKey = "";
+    this.#failed(cause);
+  }
+
+  #updateStatus(event: HerdrEvent): void {
+    if (event.event !== "pane.agent_status_changed" || this.#discovery === null) return;
+    const data = event.data;
+    const panes = this.#discovery.panes.map((pane) => pane.id === data.pane_id ? { ...pane, status: data.agent_status } : pane);
+    if (panes.every((pane, index) => pane === this.#discovery?.panes[index])) return;
+    this.#discovery = { ...this.#discovery, panes };
+    this.onUpdate(this.#discovery);
   }
 
   #failed(cause: unknown): void {

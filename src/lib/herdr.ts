@@ -46,7 +46,7 @@ export const terminalFrameSchema = z.object({
   seq: z.number().int().nonnegative(),
   encoding: z.literal("ansi"),
   /** Base64 ANSI bytes. Decode and write straight into a terminal emulator. */
-  bytes: z.string(),
+  bytes: z.string().refine(isCanonicalBase64, "terminal frame bytes must be canonical base64"),
   full: z.boolean(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
@@ -66,6 +66,11 @@ export type TerminalRecord = z.infer<typeof terminalRecordSchema>;
 /** Parse one newline-delimited observer record. */
 export function parseTerminalRecord(line: string): TerminalRecord {
   return terminalRecordSchema.parse(parseJson(line, "herdr terminal record"));
+}
+
+function isCanonicalBase64(value: string): boolean {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return false;
+  return Buffer.from(value, "base64").toString("base64") === value;
 }
 
 export interface TerminalViewport {

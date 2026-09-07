@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { HelmConfig } from "@/lib/config";
-import type { TerminalObservation, TerminalRecord } from "@/lib/herdr";
+import { parseTerminalRecord, type TerminalObservation, type TerminalRecord } from "@/lib/herdr";
 import { TerminalBridge } from "@/lib/terminal-bridge";
 
-const config: HelmConfig = { fmHome: "/fm", fmBinDir: "/fm/bin", fmStateDir: "/fm/state", herdrSocketPath: "/tmp/herdr.sock", herdrBin: "herdr", port: 7333, bind: "127.0.0.1" };
+const config: HelmConfig = { fmHome: "/fm", fmBinDir: "/fm/bin", fmStateDir: "/fm/state", helmStateDir: "/helm/state", herdrSocketPath: "/tmp/herdr.sock", herdrBin: "herdr", port: 7333, bind: "127.0.0.1" };
 
 function observation(records: TerminalRecord[]): TerminalObservation {
   let stopped = false;
@@ -15,6 +15,10 @@ function observation(records: TerminalRecord[]): TerminalObservation {
 }
 
 describe("TerminalBridge", () => {
+  it("rejects malformed terminal frame bytes before forwarding them", () => {
+    expect(() => parseTerminalRecord('{"type":"terminal.frame","seq":1,"encoding":"ansi","bytes":"not base64!","full":true,"width":80,"height":24}')).toThrow(/base64/);
+  });
+
   it("forwards decoded frames and respawns after a sequence gap", async () => {
     const send = vi.fn();
     const observe = vi.fn()

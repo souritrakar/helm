@@ -25,10 +25,10 @@ import { z } from "zod";
 import { ConfigError, loadConfig } from "./src/lib/config";
 import { handleInboxHttp } from "./src/lib/inbox-http";
 import { createInboxRuntime } from "./src/lib/inbox-runtime";
-import { allowedHostsForBind } from "./src/lib/require-operator";
+import { allowedHostsForBind, requireOperator } from "./src/lib/require-operator";
 import { paneRun, paneSendKeys, type TerminalViewport } from "./src/lib/herdr";
 import { PaneDirectory, type PaneDiscovery } from "./src/lib/panes";
-import { isJsonRequest, isSameOrigin, requestedViewport } from "./src/lib/request";
+import { requestedViewport } from "./src/lib/request";
 import { TerminalBridge } from "./src/lib/terminal-bridge";
 
 /**
@@ -52,8 +52,8 @@ const inputSchema = z.union([
 ]);
 const INPUT_CONTRACT = `Terminal input must be {paneId, text} for one-shot text, or {paneId, key} where key is one of ${TERMINAL_KEYS.join(", ")}`;
 
-const colsSchema = z.number().int().min(2).max(500);
-const rowsSchema = z.number().int().min(2).max(300);
+const colsSchema = z.number().int();
+const rowsSchema = z.number().int();
 const MAX_BODY_BYTES = 1_000_000;
 
 const clientMessageSchema = z.discriminatedUnion("type", [
@@ -127,7 +127,7 @@ async function main(): Promise<void> {
     void (async () => {
       try {
         if (req.method === "POST" && req.url === "/api/term/input") {
-          await handleInput(req, res, config, () => new Set(discovery.panes.map((pane) => pane.id)));
+          await handleInput(req, res, config, allowedHosts, () => new Set(discovery.panes.map((pane) => pane.id)));
           return;
         }
         const owned = await handleInboxHttp(req, res, {
@@ -161,7 +161,7 @@ async function main(): Promise<void> {
       if (!pathname.startsWith("/_next/")) socket.destroy();
       return;
     }
-    if (!isSameOrigin(request.headers)) { rejectUpgrade(socket, 403, "Forbidden"); return; }
+    if (!requireOperator(request, { allowedHosts }).allow) { rejectUpgrade(socket, 403, "Forbidden"); return; }
     websocketServer.handleUpgrade(request, socket, head, (websocket) => websocketServer.emit("connection", websocket, request));
   });
   websocketServer.on("connection", (socket: WebSocket, request: IncomingMessage) => {
@@ -172,9 +172,9 @@ async function main(): Promise<void> {
     // appears, rather than holding a socket nothing ever speaks to.
     socket.on("message", (raw) => {
       let message: z.infer<typeof clientMessageSchema>;
-      try { message = clientMessageSchema.parse(JSON.parse(raw.toString())); } catch { sendJson(socket, { type: "terminal.status", status: "closed", reason: "Invalid terminal message", reconnect: false }); return; }
+      try { message = clientMessageSchema.parse(JSON.parse(raw.toString())); } catch { sendJson(socket, { type: "terminal.notice", message: "Invalid terminal message" }); return; }
       if (message.type === "terminal.resize") {
-        client.viewport = { cols: message.cols, rows: message.rows };
+        client.viewport = clampViewport({ cols: message.cols, rows: message.rows });
         client.bridge?.resize(client.viewport);
       }
       if (message.type === "terminal.reconnect") {
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
         else detach(client);
       }
       if (message.type === "terminal.select") {
-        if (!discovery.panes.some((pane) => pane.id === message.paneId)) { sendJson(socket, { type: "terminal.status", status: "closed", reason: "Unknown pane", reconnect: false }); return; }
+        if (!discovery.panes.some((pane) => pane.id === message.paneId)) { sendJson(socket, { type: "terminal.notice", message: "Unknown pane" }); return; }
         attach(client, message.paneId); broadcastPanes();
       }
     });
@@ -207,10 +207,16 @@ async function main(): Promise<void> {
   });
   console.log(`helm listening on http://${config.bind}:${config.port} (FM_HOME=${config.fmHome})`);
 
+  let shuttingDown = false;
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     inbox.stop();
     directory.close();
-    for (const client of clients) client.bridge?.close();
+    for (const client of clients) {
+      client.bridge?.close();
+      client.socket.terminate();
+    }
     websocketServer.close();
     server.close(() => process.exit(0));
   };
@@ -223,9 +229,16 @@ function rejectUpgrade(socket: Duplex, status: number, reason: string): void {
   socket.destroy();
 }
 
-async function handleInput(req: IncomingMessage, res: ServerResponse, config: ReturnType<typeof loadConfig>, knownPaneIds: () => ReadonlySet<string>): Promise<void> {
-  if (!isSameOrigin(req.headers)) { respondJson(res, 403, { error: "Cross-origin terminal input is refused" }); return; }
-  if (!isJsonRequest(req.headers)) { respondJson(res, 415, { error: "Terminal input must be sent as application/json" }); return; }
+function clampViewport(viewport: TerminalViewport): TerminalViewport {
+  return {
+    cols: Math.min(500, Math.max(2, viewport.cols)),
+    rows: Math.min(300, Math.max(2, viewport.rows)),
+  };
+}
+
+async function handleInput(req: IncomingMessage, res: ServerResponse, config: ReturnType<typeof loadConfig>, allowedHosts: readonly string[], knownPaneIds: () => ReadonlySet<string>): Promise<void> {
+  const gate = requireOperator(req, { mutate: true, allowedHosts });
+  if (!gate.allow) { respondJson(res, 403, { error: "Terminal input is refused" }); return; }
   try {
     const body = await readJsonBody(req);
     const input = inputSchema.parse(body);

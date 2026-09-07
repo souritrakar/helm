@@ -78,7 +78,7 @@ export function TerminalPane() {
         let message: ServerMessage;
         try { message = JSON.parse(event.data) as ServerMessage; } catch { return; }
         if (message.type === "terminal.panes") {
-          setPanes(message.panes); setSelectedPaneId(message.selectedPaneId); setNotice("");
+          setPanes(message.panes); setSelectedPaneId(message.selectedPaneId); setNotice(""); setSendError("");
         } else if (message.type === "terminal.status") {
           setStatus(message.status); setDetail(typeof message.reason === "string" ? message.reason : "");
         } else if (message.type === "terminal.notice") {
@@ -107,9 +107,20 @@ export function TerminalPane() {
   }, [sendViewport]);
 
   const selectPane = (paneId: string): void => {
+    const socket = socketRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) {
+      setNotice("Terminal connection is not ready");
+      return;
+    }
+    try {
+      socket.send(JSON.stringify({ type: "terminal.select", paneId }));
+    } catch {
+      setNotice("Terminal connection is not ready");
+      return;
+    }
     terminalRef.current?.reset();
     setSelectedPaneId(paneId);
-    socketRef.current?.send(JSON.stringify({ type: "terminal.select", paneId }));
+    setSendError("");
   };
   /** Explicit viewer action only: a dropped WebSocket never respawns by itself. */
   const reconnect = (): void => {
@@ -136,7 +147,7 @@ export function TerminalPane() {
   return <section className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100">
     <header className="flex items-center gap-3 border-b border-zinc-800 px-3 py-2">
       <label className="relative min-w-0 flex-1"><span className="sr-only">Pane</span><select value={selectedPaneId ?? ""} onChange={(event) => selectPane(event.target.value)} className="w-full appearance-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 pr-8 text-sm text-zinc-100">
-        {panes.map((pane) => <option key={pane.id} value={pane.id}>{pane.isFirstmate ? "Firstmate — " : ""}{pane.taskId ?? pane.title}</option>)}
+        {panes.map((pane) => <option key={pane.id} value={pane.id}>{pane.isFirstmate ? "Firstmate — " : ""}{pane.taskTitle ?? pane.title}{pane.taskId === null ? "" : ` (${pane.taskId})`}</option>)}
       </select><ChevronDown className="pointer-events-none absolute right-2 top-2 size-4 text-zinc-400" /></label>
       <span className="text-xs text-zinc-400">{status === "connected" ? "Live mirror" : status === "resyncing" ? "Resyncing" : status === "closed" ? "Disconnected" : "Connecting"}</span>
       {status === "closed" && <button type="button" onClick={reconnect} className="rounded border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800">Reconnect</button>}

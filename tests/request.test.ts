@@ -7,45 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_VIEWPORT, isJsonRequest, isSameOrigin, requestedViewport } from "@/lib/request";
-
-describe("isSameOrigin", () => {
-  it("accepts helm's own origin", () => {
-    expect(isSameOrigin({ host: "127.0.0.1:7333", origin: "http://127.0.0.1:7333" })).toBe(true);
-  });
-
-  it("refuses another page's origin", () => {
-    expect(isSameOrigin({ host: "127.0.0.1:7333", origin: "https://evil.example" })).toBe(false);
-  });
-
-  it("refuses an origin that only differs by port", () => {
-    expect(isSameOrigin({ host: "127.0.0.1:7333", origin: "http://127.0.0.1:8080" })).toBe(false);
-  });
-
-  it("refuses an opaque origin", () => {
-    expect(isSameOrigin({ host: "127.0.0.1:7333", origin: "null" })).toBe(false);
-  });
-
-  it("accepts a request no browser mediated", () => {
-    expect(isSameOrigin({ host: "127.0.0.1:7333" })).toBe(true);
-  });
-});
-
-describe("isJsonRequest", () => {
-  it("accepts application/json with parameters", () => {
-    expect(isJsonRequest({ "content-type": "application/json; charset=utf-8" })).toBe(true);
-  });
-
-  it("refuses the CORS-simple content types a cross-origin form can send", () => {
-    expect(isJsonRequest({ "content-type": "text/plain;charset=UTF-8" })).toBe(false);
-    expect(isJsonRequest({ "content-type": "application/x-www-form-urlencoded" })).toBe(false);
-    expect(isJsonRequest({ "content-type": "multipart/form-data; boundary=x" })).toBe(false);
-  });
-
-  it("refuses a request that declares no body type", () => {
-    expect(isJsonRequest({})).toBe(false);
-  });
-});
+import { DEFAULT_VIEWPORT, requestedViewport } from "@/lib/request";
 
 describe("requestedViewport", () => {
   it("takes the geometry the viewer connected with", () => {

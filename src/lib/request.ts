@@ -5,8 +5,6 @@
  * Both are unauthenticated and reachable from any page the viewer's browser
  * happens to open, so each one is checked before it can reach Herdr.
  */
-import type { IncomingHttpHeaders } from "node:http";
-
 import type { TerminalViewport } from "./herdr";
 
 /** The viewport an observer starts on when the client requested none. */
@@ -16,35 +14,6 @@ const MIN_COLS = 2;
 const MAX_COLS = 500;
 const MIN_ROWS = 2;
 const MAX_ROWS = 300;
-
-/**
- * Whether the request's `Origin` is helm's own.
- *
- * Without this, any page the viewer visits can drive `herdr pane run` in the
- * agent pane with a CORS-simple POST, and can open the terminal WebSocket,
- * which CORS does not cover at all. A request carrying no `Origin` is not a
- * browser-mediated one and has no ambient authority to abuse, so it passes; an
- * opaque origin (`"null"`) does not parse to a host and is refused.
- */
-export function isSameOrigin(headers: IncomingHttpHeaders): boolean {
-  const origin = headers.origin;
-  if (origin === undefined) return true;
-  try {
-    return new URL(origin).host === headers.host;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Whether the request declares a JSON body.
- *
- * `application/json` is not a CORS-simple content type, so requiring it blocks
- * the form and `text/plain` submissions that cross no preflight.
- */
-export function isJsonRequest(headers: IncomingHttpHeaders): boolean {
-  return headers["content-type"]?.split(";")[0]?.trim().toLowerCase() === "application/json";
-}
 
 /**
  * The viewport a viewer connected with.
