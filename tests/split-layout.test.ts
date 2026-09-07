@@ -66,6 +66,9 @@ describe("split layout persistence", () => {
     ["an object with no panels", encodeURIComponent(JSON.stringify({}))],
     ["a non-numeric size", encodeURIComponent(JSON.stringify({ terminal: "56", inbox: 44 }))],
     ["a NaN size", encodeURIComponent('{"terminal":NaN,"inbox":44}')],
+    ["an all-zero layout", encodeURIComponent(JSON.stringify({ terminal: 0, inbox: 0 }))],
+    ["a zero size", encodeURIComponent(JSON.stringify({ terminal: 100, inbox: 0 }))],
+    ["a negative size", encodeURIComponent(JSON.stringify({ terminal: -10, inbox: 110 }))],
   ])("falls back to the default split for %s", (_label, value) => {
     expect(parseSplitLayout(value as string | undefined)).toBeUndefined();
   });

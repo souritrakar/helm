@@ -28,6 +28,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/sonner";
+import { inboxItemId } from "@/lib/types";
 import type { InboxItem, InboxItemKind, InboxItemState, InboxUrgency } from "@/lib/types";
 
 type Filter = "blocking" | "all" | "answered";
@@ -37,7 +38,7 @@ const splitGroupId = "helm-main-split";
 
 const fixtureItems: readonly InboxItem[] = [
   {
-    id: "status-decision:storage-choice",
+    id: inboxItemId("status-decisions", "storage-choice"),
     source: "status-decisions",
     kind: "decision",
     urgency: "blocking",
@@ -57,7 +58,7 @@ const fixtureItems: readonly InboxItem[] = [
     openedAt: "2026-09-06T13:20:00.000Z",
   },
   {
-    id: "bearings:merge-helm-foundation",
+    id: inboxItemId("bearings", "merge-helm-foundation"),
     source: "bearings",
     kind: "merge",
     urgency: "blocking",
@@ -77,7 +78,7 @@ const fixtureItems: readonly InboxItem[] = [
     openedAt: "2026-09-06T12:00:00.000Z",
   },
   {
-    id: "credentials:github-device-login",
+    id: inboxItemId("credentials", "github-device-login"),
     source: "credentials",
     kind: "credential",
     urgency: "attention",
@@ -95,7 +96,7 @@ const fixtureItems: readonly InboxItem[] = [
     openedAt: "2026-09-06T11:40:00.000Z",
   },
   {
-    id: "status:blocker-port",
+    id: inboxItemId("status-decisions", "blocker-port"),
     source: "status-decisions",
     kind: "blocker",
     urgency: "blocking",
@@ -111,7 +112,7 @@ const fixtureItems: readonly InboxItem[] = [
     openedAt: "2026-09-06T10:55:00.000Z",
   },
   {
-    id: "herdr:escalation-prompt",
+    id: inboxItemId("agent-state", "escalation-prompt"),
     source: "agent-state",
     kind: "escalation",
     urgency: "attention",
@@ -127,7 +128,7 @@ const fixtureItems: readonly InboxItem[] = [
     openedAt: "2026-09-06T10:20:00.000Z",
   },
   {
-    id: "review:ui-shell",
+    id: inboxItemId("review-results", "ui-shell"),
     source: "review-results",
     kind: "review",
     urgency: "fyi",
@@ -143,7 +144,7 @@ const fixtureItems: readonly InboxItem[] = [
     answeredAt: "2026-09-05T17:22:00.000Z",
   },
   {
-    id: "notes:handoff",
+    id: inboxItemId("captain-notes", "handoff"),
     source: "captain-notes",
     kind: "note",
     urgency: "fyi",
@@ -158,7 +159,7 @@ const fixtureItems: readonly InboxItem[] = [
     openedAt: "2026-09-05T15:00:00.000Z",
   },
   {
-    id: "custom:operator-pattern",
+    id: inboxItemId("output-match", "operator-pattern"),
     source: "output-match",
     kind: "custom",
     urgency: "attention",

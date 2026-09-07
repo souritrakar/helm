@@ -20,7 +20,7 @@ export function parseSplitLayout(value: string | undefined): Layout | undefined 
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
   const entries = Object.entries(parsed);
   if (entries.length === 0) return undefined;
-  if (entries.some(([, size]) => typeof size !== "number" || !Number.isFinite(size))) return undefined;
+  if (entries.some(([, size]) => typeof size !== "number" || !Number.isFinite(size) || size <= 0)) return undefined;
   return Object.fromEntries(entries) as Layout;
 }
 
