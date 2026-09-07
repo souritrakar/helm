@@ -19,6 +19,7 @@ const CONFIG: HelmConfig = {
   fmHome: "/fixture/firstmate",
   fmBinDir: "/fixture/firstmate/bin",
   fmStateDir: "/fixture/firstmate/state",
+  helmStateDir: "/fixture/helm-state",
   herdrSocketPath: "/fixture/herdr.sock",
   herdrBin: "herdr",
   port: DEFAULT_PORT,

@@ -34,6 +34,19 @@ describe("loadConfig", () => {
     expect(config.fmStateDir).toBe(join(home, "state"));
   });
 
+  it("defaults helm's writable state dir outside FM_HOME", () => {
+    const config = loadConfig({ FM_HOME: home, XDG_STATE_HOME: "/xdg-state" });
+
+    expect(config.helmStateDir).toBe("/xdg-state/helm");
+    expect(config.helmStateDir.startsWith(home)).toBe(false);
+  });
+
+  it("takes HELM_STATE_DIR when set", () => {
+    const config = loadConfig({ FM_HOME: home, HELM_STATE_DIR: "/var/lib/helm" });
+
+    expect(config.helmStateDir).toBe("/var/lib/helm");
+  });
+
   it("defaults the bind address and port to loopback", () => {
     const config = loadConfig({ FM_HOME: home });
 
@@ -82,6 +95,11 @@ describe("loadConfig", () => {
       "Herdr socket relative",
       () => ({ FM_HOME: home, HERDR_SOCKET_PATH: "herdr.sock" }),
       /must be an absolute path/,
+    ],
+    [
+      "HELM_STATE_DIR relative",
+      () => ({ FM_HOME: home, HELM_STATE_DIR: "helm-state" }),
+      /HELM_STATE_DIR must be an absolute path/,
     ],
   ])("rejects %s", (_label, buildEnv, expected) => {
     const env = buildEnv();

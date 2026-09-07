@@ -25,6 +25,13 @@ export interface HelmConfig {
   readonly fmBinDir: string;
   /** `$FM_HOME/state` — the task state directory the decision fold scans. */
   readonly fmStateDir: string;
+  /**
+   * helm's own writable state (`~/.local/state/helm` by default).
+   *
+   * Answered-history and the audit log live here. This is never under
+   * `$FM_HOME` — helm must not write there (AGENTS.md hard rule 1).
+   */
+  readonly helmStateDir: string;
   /** Herdr control socket. Liveness is a doctor concern, not a load concern. */
   readonly herdrSocketPath: string;
   /** Herdr executable, resolved on `PATH` unless an absolute path is given. */
@@ -54,11 +61,38 @@ export function loadConfig(env: ConfigEnv = process.env): HelmConfig {
     fmHome,
     fmBinDir,
     fmStateDir,
+    helmStateDir: resolveHelmStateDir(env),
     herdrSocketPath: resolveHerdrSocketPath(env),
     herdrBin: nonEmpty("HERDR_BIN", env.HERDR_BIN) ?? DEFAULT_HERDR_BIN,
     port: parsePort("HELM_PORT", env.HELM_PORT),
     bind: parseBind("HELM_BIND", env.HELM_BIND),
   };
+}
+
+/**
+ * `$HELM_STATE_DIR`, or `$XDG_STATE_HOME/helm`, or `$HOME/.local/state/helm`.
+ *
+ * The directory need not exist yet — the store and audit log create it on first
+ * write. An explicit relative path is rejected so a mis-set variable cannot
+ * silently write under the process cwd.
+ */
+function resolveHelmStateDir(env: ConfigEnv): string {
+  const explicit = nonEmpty("HELM_STATE_DIR", env.HELM_STATE_DIR);
+  const value = explicit ?? join(stateHome(env), "helm");
+  if (!isAbsolute(value)) {
+    throw new ConfigError(`HELM_STATE_DIR must be an absolute path, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+/**
+ * `$XDG_STATE_HOME`, or `$HOME/.local/state`.
+ *
+ * Same empty-means-unset rule as {@link configHome}.
+ */
+function stateHome(env: ConfigEnv): string {
+  const value = env.XDG_STATE_HOME?.trim();
+  return value === undefined || value === "" ? join(homedir(), ".local", "state") : value;
 }
 
 function requireReadableDir(label: string, value: string | undefined): string {

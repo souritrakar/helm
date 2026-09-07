@@ -1,0 +1,215 @@
+/**
+ * HTTP handlers for the inbox event stream and respond endpoint.
+ *
+ * Served from the custom Node server (SPEC D5): SSE needs a long-lived
+ * connection with `Last-Event-ID` resume, which does not belong in a Next.js
+ * route handler. Compression and proxy buffering are disabled on the stream.
+ */
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+import type { InboxStore, InboxStoreEvent } from "./inbox-store";
+import type { Responder } from "./responder";
+import type { RespondAction } from "./types";
+
+export interface InboxHttpDeps {
+  readonly store: InboxStore;
+  readonly responder: Responder;
+}
+
+const RESPOND_PATH = /^\/api\/inbox\/([^/]+)\/respond\/?$/;
+
+/**
+ * Try to handle an inbox HTTP request.
+ *
+ * Returns true when this module owned the request (including 4xx/5xx it wrote).
+ * Returns false when the request should fall through to Next.js.
+ */
+export async function handleInboxHttp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: InboxHttpDeps,
+): Promise<boolean> {
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const { pathname } = url;
+
+  if (pathname === "/api/events" && (req.method === "GET" || req.method === "HEAD")) {
+    if (req.method === "HEAD") {
+      res.writeHead(200, sseHeaders());
+      res.end();
+      return true;
+    }
+    handleSse(req, res, deps.store);
+    return true;
+  }
+
+  const respondMatch = RESPOND_PATH.exec(pathname);
+  if (respondMatch !== null && req.method === "POST") {
+    const id = decodeURIComponent(respondMatch[1] ?? "");
+    await handleRespond(req, res, deps, id);
+    return true;
+  }
+
+  if (pathname === "/api/inbox" && req.method === "GET") {
+    json(res, 200, { items: deps.store.listOpen() });
+    return true;
+  }
+
+  return false;
+}
+
+function handleSse(req: IncomingMessage, res: ServerResponse, store: InboxStore): void {
+  res.writeHead(200, sseHeaders());
+
+  const lastEventIdHeader = req.headers["last-event-id"];
+  const lastEventId =
+    typeof lastEventIdHeader === "string" && lastEventIdHeader.trim() !== ""
+      ? Number(lastEventIdHeader)
+      : null;
+
+  if (lastEventId !== null && !Number.isNaN(lastEventId)) {
+    for (const event of store.eventsSince(lastEventId)) {
+      writeSse(res, event);
+    }
+  } else {
+    // Cold connect: send the current open set. Snapshot events use id 0 so a
+    // client that reconnects with Last-Event-ID still gets live ids after.
+    for (const event of store.snapshotEvents()) {
+      writeSse(res, event, { omitId: true });
+    }
+  }
+
+  // Comment heartbeat so proxies keep the socket open.
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) return;
+    res.write(": heartbeat\n\n");
+  }, 15_000);
+
+  const unsubscribe = store.subscribe((event) => {
+    writeSse(res, event);
+  });
+
+  const cleanup = (): void => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  };
+  req.on("close", cleanup);
+  res.on("close", cleanup);
+}
+
+async function handleRespond(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: InboxHttpDeps,
+  id: string,
+): Promise<void> {
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (cause) {
+    json(res, 400, { ok: false, error: cause instanceof Error ? cause.message : String(cause) });
+    return;
+  }
+
+  const action = parseRespondAction(body);
+  if (action === null) {
+    json(res, 400, { ok: false, error: "body must include a non-empty string value and/or text" });
+    return;
+  }
+
+  const item = deps.store.get(id);
+  if (item === undefined || item.state !== "open") {
+    // Also reject handled ids that are only in history.
+    if (deps.store.isHandled(id)) {
+      json(res, 409, { ok: false, error: `item ${id} was already answered or dismissed` });
+      return;
+    }
+    json(res, 404, { ok: false, error: `item ${id} is not open` });
+    return;
+  }
+
+  // Prefer an adapter-owned respond hook when present (future Lane D); the
+  // shared Responder is the default path for every channel.
+  const result = await deps.responder.respond(item, action);
+  if (result.ok) {
+    deps.store.markAnswered(id);
+  }
+  json(res, result.ok ? 200 : 502, result);
+}
+
+function parseRespondAction(body: unknown): RespondAction | null {
+  if (typeof body !== "object" || body === null) return null;
+  const record = body as Record<string, unknown>;
+  const value = typeof record.value === "string" ? record.value : undefined;
+  const text = typeof record.text === "string" ? record.text : undefined;
+  if ((value === undefined || value.trim() === "") && (text === undefined || text.trim() === "")) {
+    return null;
+  }
+  return {
+    ...(value !== undefined ? { value } : {}),
+    ...(text !== undefined ? { text } : {}),
+  };
+}
+
+function sseHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // Stop nginx / Caddy from buffering the stream into uselessness (SPEC D5).
+    "X-Accel-Buffering": "no",
+  };
+}
+
+function writeSse(
+  res: ServerResponse,
+  event: InboxStoreEvent,
+  options: { readonly omitId?: boolean } = {},
+): void {
+  if (res.writableEnded) return;
+  const lines: string[] = [];
+  if (!options.omitId && event.id > 0) {
+    lines.push(`id: ${event.id}`);
+  }
+  lines.push(`event: ${event.type}`);
+  lines.push(`data: ${JSON.stringify(event.data)}`);
+  res.write(`${lines.join("\n")}\n\n`);
+}
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const max = 64 * 1024;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > max) {
+        reject(new Error("request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (raw.trim() === "") {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw) as unknown);
+      } catch (cause) {
+        reject(new Error(`invalid JSON body: ${cause instanceof Error ? cause.message : String(cause)}`));
+      }
+    });
+    req.on("error", reject);
+  });
+}
