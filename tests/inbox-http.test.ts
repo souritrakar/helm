@@ -12,7 +12,7 @@ import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
 import { handleInboxHttp } from "@/lib/inbox-http";
 import { createInboxStore, type InboxStore } from "@/lib/inbox-store";
 import { auditLogPath } from "@/lib/paths";
-import { createResponder } from "@/lib/responder";
+import { createResponder, type Responder } from "@/lib/responder";
 import { inboxItemId, type InboxItem } from "@/lib/types";
 
 const CONFIG: HelmConfig = {
@@ -30,12 +30,13 @@ let stateDir: string;
 let store: InboxStore;
 let server: Server;
 let baseUrl: string;
+let responder: Responder;
 
 function item(naturalKey: string): InboxItem {
   return {
     id: inboxItemId("fake", naturalKey),
     source: "fake",
-    kind: "decision",
+    kind: "status-decision",
     urgency: "blocking",
     taskId: "helm-foundation",
     title: naturalKey,
@@ -67,7 +68,7 @@ beforeEach(async () => {
   stateDir = mkdtempSync(join(tmpdir(), "helm-http-"));
   store = createInboxStore(stateDir);
   const audit = createMemoryAuditWriter();
-  const responder = createResponder({
+  responder = createResponder({
     config: { ...CONFIG, helmStateDir: stateDir },
     audit,
     exec: {
@@ -175,7 +176,7 @@ describe("POST /api/inbox/:id/respond", () => {
     expect(res.status).toBe(400);
   });
 
-  it("accepts empty value when text is present", async () => {
+  it("rejects a blank value when text is also supplied", async () => {
     store.reconcile("fake", [
       {
         ...item("k1"),
@@ -190,10 +191,7 @@ describe("POST /api/inbox/:id/respond", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: "", text: "ship it" }),
     });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; argv: string[] };
-    expect(body.ok).toBe(true);
-    expect(body.argv.at(-1)).toBe("ship it");
+    expect(res.status).toBe(400);
   });
 
   it("returns 400 for value when options is empty", async () => {
@@ -263,6 +261,50 @@ describe("POST /api/inbox/:id/respond", () => {
       body: JSON.stringify({ value: "yes", text: "and a note" }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("marks a delivered answer handled when audit persistence fails", async () => {
+    let dispatches = 0;
+    responder = createResponder({
+      config: { ...CONFIG, helmStateDir: stateDir },
+      audit: {
+        append: () => {
+          throw new Error("disk full");
+        },
+      },
+      exec: {
+        resolveKey: async (_item, answer) => {
+          dispatches += 1;
+          return {
+            ok: true,
+            channel: "resolve-key",
+            argv: ["fm-send.sh", "helm-foundation", "--resolve-key", "k1", answer],
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            at: "2026-09-06T00:00:00.000Z",
+          };
+        },
+      },
+    });
+    store.reconcile("fake", [item("k1")]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const response = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "yes" }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ delivered: true, error: expect.stringMatching(/audit persist failed/) });
+    expect(store.isHandled(inboxItemId("fake", "k1"))).toBe(true);
+    const retry = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "yes" }),
+    });
+    expect(retry.status).toBe(409);
+    expect(dispatches).toBe(1);
   });
 
 });

@@ -6,9 +6,9 @@
  * validated at load time and every failure names the offending variable, the
  * value seen, and what was expected.
  */
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 /** Thrown when the environment cannot produce a usable configuration. */
 export class ConfigError extends Error {
@@ -84,12 +84,36 @@ function resolveHelmStateDir(env: ConfigEnv, fmHome: string): string {
   if (!isAbsolute(value)) {
     throw new ConfigError(`HELM_STATE_DIR must be an absolute path, got ${JSON.stringify(value)}`);
   }
-  if (isPathInsideOrEqual(value, fmHome)) {
+  const resolvedFmHome = realpathSync(fmHome);
+  const resolvedStateDir = resolveExistingPath(value);
+  if (isPathInsideOrEqual(resolvedStateDir, resolvedFmHome)) {
     throw new ConfigError(
       `HELM_STATE_DIR ${JSON.stringify(value)} must not be equal to or under FM_HOME ${JSON.stringify(fmHome)}; helm must never write under $FM_HOME`,
     );
   }
   return value;
+}
+
+function resolveExistingPath(path: string): string {
+  const missing: string[] = [];
+  let cursor = resolve(path);
+  while (true) {
+    try {
+      return join(realpathSync(cursor), ...missing.reverse());
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new ConfigError(
+          `HELM_STATE_DIR ${JSON.stringify(path)} cannot be resolved: ${errorMessage(cause)}`,
+        );
+      }
+      const parent = dirname(cursor);
+      if (parent === cursor) {
+        throw new ConfigError(`HELM_STATE_DIR ${JSON.stringify(path)} cannot be resolved`);
+      }
+      missing.push(cursor.slice(parent.length + (parent === "/" ? 0 : 1)));
+      cursor = parent;
+    }
+  }
 }
 
 /** True when `path` is `parent` or a descendant of `parent`. */

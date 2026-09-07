@@ -48,7 +48,7 @@ export class AdapterRegistry {
       for (const adapter of this.adapters.values()) {
         const ctx: InboxAdapterContext = {
           emit: (items) => store.reconcile(adapter.id, items),
-          retract: (ids) => store.retract(ids),
+          retract: (ids) => store.retract(ids.filter((id) => id.startsWith(`${adapter.id}:`))),
         };
         const disposable = await adapter.start(ctx);
         this.disposers.set(adapter.id, disposable);

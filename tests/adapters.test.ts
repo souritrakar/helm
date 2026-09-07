@@ -83,4 +83,29 @@ describe("AdapterRegistry + fake adapter", () => {
     await expect(registry.start(store)).rejects.toThrow(/boom/);
     expect(first.controls.started).toBe(false);
   });
+
+  it("does not let an adapter retract another adapter's cards", async () => {
+    const store = createInboxStore(stateDir);
+    const registry = createAdapterRegistry();
+    let retractFirst: ((ids: string[]) => void) | undefined;
+    registry.register({
+      id: "first",
+      async start(ctx) {
+        retractFirst = ctx.retract;
+        ctx.emit([{ ...item("one"), id: inboxItemId("first", "one"), source: "first" }]);
+        return { [Symbol.dispose]: () => undefined };
+      },
+    });
+    registry.register({
+      id: "second",
+      async start(ctx) {
+        ctx.emit([{ ...item("two"), id: inboxItemId("second", "two"), source: "second" }]);
+        return { [Symbol.dispose]: () => undefined };
+      },
+    });
+
+    await registry.start(store);
+    retractFirst?.([inboxItemId("second", "two")]);
+    expect(store.listOpen().map((entry) => entry.id)).toContain(inboxItemId("second", "two"));
+  });
 });

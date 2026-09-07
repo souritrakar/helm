@@ -89,4 +89,16 @@ describe("allowedHostsForBind", () => {
     expect(hosts).toContain("127.0.0.1:7333");
     expect(hosts).toContain("localhost:7333");
   });
+
+  it.each([80, 443])("includes portless loopback forms on default port %i", (port) => {
+    const hosts = allowedHostsForBind("127.0.0.1", port);
+    expect(hosts).toContain("127.0.0.1");
+    expect(hosts).toContain("localhost");
+    expect(
+      requireOperator(req({ "content-type": "application/json", host: "127.0.0.1" }), {
+        mutate: true,
+        allowedHosts: hosts,
+      }),
+    ).toEqual({ allow: true });
+  });
 });

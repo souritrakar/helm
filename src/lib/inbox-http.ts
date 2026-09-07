@@ -183,6 +183,15 @@ async function handleRespond(
         throw cause;
       }
     }
+    if (result.ok && result.auditError !== undefined) {
+      json(res, 500, {
+        ok: false,
+        delivered: true,
+        error: `answer delivered but audit persist failed: ${result.auditError}`,
+        result,
+      });
+      return;
+    }
     json(res, result.ok ? 200 : 502, result);
   } finally {
     respondInFlight.delete(id);
@@ -213,23 +222,18 @@ export function validateRespondContract(item: InboxItem, action: RespondAction):
 }
 
 /**
- * Parse a respond body. Empty or whitespace-only fields are dropped so a body
- * like `{ "value": "", "text": "ship it" }` yields `{ text: "ship it" }`.
+ * Parse a respond body while retaining the presence of both fields. This lets
+ * the contract reject a supplied blank field alongside a valid answer.
  */
 function parseRespondAction(body: unknown): RespondAction | null {
   if (typeof body !== "object" || body === null) return null;
   const record = body as Record<string, unknown>;
-  const value =
-    typeof record.value === "string" && record.value.trim() !== "" ? record.value : undefined;
-  const text =
-    typeof record.text === "string" && record.text.trim() !== "" ? record.text : undefined;
-  if (value === undefined && text === undefined) {
-    return null;
-  }
-  return {
-    ...(value !== undefined ? { value } : {}),
-    ...(text !== undefined ? { text } : {}),
-  };
+  const value = typeof record.value === "string" ? record.value : undefined;
+  const text = typeof record.text === "string" ? record.text : undefined;
+  if (value !== undefined && text !== undefined) return { value, text };
+  if (value !== undefined && value.trim() !== "") return { value };
+  if (text !== undefined && text.trim() !== "") return { text };
+  return null;
 }
 
 function sseHeaders(): Record<string, string> {

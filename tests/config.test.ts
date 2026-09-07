@@ -2,7 +2,7 @@
  * The config loader must fail loudly and specifically. A vague startup error
  * here costs an operator far more than the branch costs to test.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -123,5 +123,14 @@ describe("loadConfig", () => {
     writeFileSync(file, "");
 
     expect(() => loadConfig({ FM_HOME: file })).toThrow(/is not a directory/);
+  });
+
+  it("rejects a state directory symlink that resolves under FM_HOME", () => {
+    const alias = join(emptyDir, "state-alias");
+    symlinkSync(join(home, "state"), alias);
+
+    expect(() => loadConfig({ FM_HOME: home, HELM_STATE_DIR: alias })).toThrow(
+      /must not be equal to or under FM_HOME/,
+    );
   });
 });

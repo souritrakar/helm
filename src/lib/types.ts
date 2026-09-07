@@ -12,9 +12,14 @@
  * adapters raise.
  */
 export type InboxItemKind =
+  | "status-decision"
   | "decision"
   | "merge"
   | "credential"
+  | "captain-held"
+  | "destructive"
+  | "irreversible"
+  | "security-sensitive"
   | "blocker"
   | "escalation"
   | "review"
@@ -134,7 +139,7 @@ export interface RespondAttempt {
  * failures alike: a disputed action must always be reconstructable.
  */
 export type RespondResult =
-  | (RespondAttempt & { readonly ok: true })
+  | (RespondAttempt & { readonly ok: true; readonly auditError?: string })
   | (RespondAttempt & { readonly ok: false; readonly error: string });
 
 /** What an adapter is handed so it can publish into the store. */

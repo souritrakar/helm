@@ -35,7 +35,7 @@ function baseItem(overrides: Partial<InboxItem> = {}): InboxItem {
   return {
     id: inboxItemId("status-decisions", "api-shape"),
     source: "status-decisions",
-    kind: "decision",
+    kind: "status-decision",
     urgency: "blocking",
     taskId: "helm-foundation",
     title: "API shape",
@@ -50,13 +50,18 @@ function baseItem(overrides: Partial<InboxItem> = {}): InboxItem {
 }
 
 describe("routeChannel (D-C)", () => {
-  it("forces merge and credential through relay", () => {
+  it("forces sensitive item kinds through relay", () => {
     expect(routeChannel(baseItem({ kind: "merge", respond: { channel: "resolve-key", key: "k" } }))).toBe(
       "relay",
     );
     expect(
       routeChannel(baseItem({ kind: "credential", respond: { channel: "captain-hold", target: "t" } })),
     ).toBe("relay");
+    for (const kind of ["captain-held", "destructive", "irreversible", "security-sensitive"] as const) {
+      expect(routeChannel(baseItem({ kind, respond: { channel: "resolve-key", key: "k" } }))).toBe(
+        "relay",
+      );
+    }
   });
 
   it("forces captain-hold through relay (D-C / dc-captain-hold-direct-path)", () => {
@@ -69,8 +74,13 @@ describe("routeChannel (D-C)", () => {
     ).toBe("relay");
   });
 
-  it("honours the card channel for keyed status decisions", () => {
+  it("permits resolve-key only for typed keyed status decisions", () => {
     expect(routeChannel(baseItem())).toBe("resolve-key");
+  });
+
+  it("relays untyped or freeform decisions that declare resolve-key", () => {
+    expect(routeChannel(baseItem({ kind: "decision" }))).toBe("relay");
+    expect(routeChannel(baseItem({ allowFreeform: true }))).toBe("relay");
   });
 
   it("honours relay for freeform cards", () => {
@@ -180,18 +190,21 @@ describe("createResponder", () => {
     expect(audit.entries[0]?.channel).toBe("relay");
   });
 
-  it("audits an empty-value body that still has text, using the text", async () => {
+  it("relays a freeform answer when the typed card permits it", async () => {
     const audit = createMemoryAuditWriter();
     const responder = createResponder({
       config: CONFIG,
       audit,
       exec: {
-        resolveKey: async (_item, answer) =>
-          ok("resolve-key", ["fm-send.sh", "helm-foundation", "--resolve-key", "api-shape", answer]),
+        relay: async (_item, answer) =>
+          ok("relay", ["herdr", "pane", "run", "w1:p1", answer]),
       },
     });
 
-    const result = await responder.respond(baseItem(), { value: "", text: "ship it" });
+    const result = await responder.respond(
+      baseItem({ allowFreeform: true, respond: { channel: "relay", target: "w1:p1" } }),
+      { text: "ship it" },
+    );
     expect(result.ok).toBe(true);
     expect(result.argv.at(-1)).toBe("ship it");
     expect(audit.entries).toHaveLength(1);

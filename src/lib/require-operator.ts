@@ -43,6 +43,11 @@ export function allowedHostsForBind(bind: string, port: number): string[] {
     hosts.add(bind.includes(":") && !bind.startsWith("[") ? `[${bind}]:${port}` : `${bind}:${port}`);
     hosts.add(`${bind}:${port}`);
   }
+  if (port === 80 || port === 443) {
+    for (const host of [...hosts]) {
+      if (host.endsWith(`:${port}`)) hosts.add(host.slice(0, -(`:${port}`.length)));
+    }
+  }
   return [...hosts];
 }
 

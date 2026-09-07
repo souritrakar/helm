@@ -60,19 +60,32 @@ export interface ChannelExecutors {
 }
 
 /** Kinds that must never take a direct path (D-C hard rule). */
-const ALWAYS_RELAY_KINDS: ReadonlySet<InboxItemKind> = new Set(["merge", "credential"]);
+const ALWAYS_RELAY_KINDS: ReadonlySet<InboxItemKind> = new Set([
+  "merge",
+  "credential",
+  "captain-held",
+  "destructive",
+  "irreversible",
+  "security-sensitive",
+]);
 
 /**
  * Pick the channel for an item under D-C.
  *
- * Merge, credential, and `captain-hold` always relay — even if a card declared
- * a direct channel. Every other class honours the channel the adapter put on
- * the card; adapters declare `resolve-key` only for keyed status decisions.
+ * Only typed keyed status decisions may use `resolve-key`. All other actionable
+ * items relay; informational cards remain non-actionable.
  */
 export function routeChannel(item: InboxItem): RespondChannel {
   if (ALWAYS_RELAY_KINDS.has(item.kind)) return "relay";
-  if (item.respond.channel === "captain-hold") return "relay";
-  return item.respond.channel;
+  if (item.respond.channel === "none") return "none";
+  if (
+    item.kind === "status-decision" &&
+    !item.allowFreeform &&
+    item.respond.channel === "resolve-key"
+  ) {
+    return "resolve-key";
+  }
+  return "relay";
 }
 
 export function createResponder(options: ResponderOptions): Responder {
@@ -145,7 +158,17 @@ export function createResponder(options: ResponderOptions): Responder {
         );
       }
 
-      options.audit.append(auditEntryFromResult(item.id, action, result));
+      try {
+        options.audit.append(auditEntryFromResult(item.id, action, result));
+      } catch (cause) {
+        if (result.ok) {
+          return {
+            ...result,
+            auditError: cause instanceof Error ? cause.message : String(cause),
+          };
+        }
+        throw cause;
+      }
       return result;
     },
   };
