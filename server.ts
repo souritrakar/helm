@@ -7,7 +7,8 @@
  * means that lane attaches an upgrade handler instead of re-architecting.
  *
  * Lane C also serves SSE `/api/events` and `POST /api/inbox/:id/respond` here
- * so the event stream stays long-lived with `Last-Event-ID` resume.
+ * so the event stream stays long-lived with `Last-Event-ID` resume. Lane G
+ * serves `GET`/`POST /api/inbox/visibility` on the same server.
  *
  * The bind address and port come from config (SPEC D10), so phase-2 remote
  * access is a config swap.
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
           store: inbox.store,
           responder: inbox.responder,
           allowedHosts,
+          visibility: inbox.visibility,
         });
         if (!owned) {
           await handle(req, res);

@@ -198,6 +198,33 @@ export function paneSendKeys(
   return runArgv(cfg.herdrBin, ["pane", "send-keys", paneId, ...keys]);
 }
 
+/**
+ * Surface a helm inbox nudge through Herdr's native notification channel.
+ *
+ * This is deliberately a one-shot display operation: it does not attach to,
+ * start, stop, or otherwise control any Herdr lifecycle resource.
+ */
+export function showHerdrNotification(
+  cfg: HelmConfig,
+  title: string,
+  body: string,
+): Promise<ExecResult> {
+  return runArgv(cfg.herdrBin, [
+    "notification",
+    "show",
+    "--title",
+    notificationText(title),
+    "--body",
+    notificationText(body),
+  ]);
+}
+
+/** Keep adapter-supplied display text inert in Herdr's terminal UI. */
+function notificationText(value: string): string {
+  const normalized = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+  return normalized === "" ? "helm notification" : normalized;
+}
+
 // ---------------------------------------------------------------------------
 // Discovery
 // ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 /**
- * HTTP handlers for the inbox event stream and respond endpoint.
+ * HTTP handlers for the inbox event stream, respond endpoint, and operator
+ * presence reports used by the read-only notification layer.
  *
  * Served from the custom Node server (SPEC D5): SSE needs a long-lived
  * connection with `Last-Event-ID` resume, which does not belong in a Next.js
@@ -15,6 +16,7 @@ import {
 } from "./inbox-store";
 import { requireOperator } from "./require-operator";
 import type { Responder } from "./responder";
+import type { InboxVisibility } from "./inbox-visibility";
 import type { InboxItem, RespondAction } from "./types";
 
 export interface InboxHttpDeps {
@@ -22,9 +24,11 @@ export interface InboxHttpDeps {
   readonly responder: Responder;
   /** Host allowlist for requireOperator (bind + loopback). */
   readonly allowedHosts: readonly string[];
+  readonly visibility?: InboxVisibility;
 }
 
 const RESPOND_PATH = /^\/api\/inbox\/([^/]+)\/respond\/?$/;
+const VISIBILITY_PATH = "/api/inbox/visibility";
 
 /** Ids currently inside `responder.respond` — blocks double-dispatch races. */
 const respondInFlight = new Set<string>();
@@ -53,6 +57,11 @@ export async function handleInboxHttp(
     return true;
   }
 
+  if (pathname === VISIBILITY_PATH && deps.visibility !== undefined) {
+    await handleVisibility(req, res, deps.visibility, deps.allowedHosts);
+    return true;
+  }
+
   const respondMatch = RESPOND_PATH.exec(pathname);
   if (respondMatch !== null && req.method === "POST") {
     let id: string;
@@ -72,6 +81,53 @@ export async function handleInboxHttp(
   }
 
   return false;
+}
+
+async function handleVisibility(
+  req: IncomingMessage,
+  res: ServerResponse,
+  visibility: InboxVisibility,
+  allowedHosts: readonly string[],
+): Promise<void> {
+  const gate = requireOperator(req, {
+    mutate: req.method === "POST",
+    allowedHosts,
+  });
+  if (!gate.allow) {
+    json(res, 403, { ok: false, error: gate.reason });
+    return;
+  }
+  if (req.method === "GET") {
+    json(res, 200, { token: visibility.createSession() });
+    return;
+  }
+  if (req.method !== "POST") {
+    res.writeHead(405, { Allow: "GET, POST" });
+    res.end();
+    return;
+  }
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (cause) {
+    json(res, 400, { ok: false, error: cause instanceof Error ? cause.message : String(cause) });
+    return;
+  }
+  const token = req.headers["x-helm-visibility-session"];
+  const parsed = parseVisibility(body);
+  if (typeof token !== "string" || parsed === null || !visibility.update(token, parsed.sequence, parsed.active, parsed.itemIds)) {
+    json(res, 403, { ok: false, error: "valid helm visibility session is required" });
+    return;
+  }
+  json(res, 200, { ok: true });
+}
+
+function parseVisibility(value: unknown): { readonly sequence: number; readonly active: boolean; readonly itemIds: string[] } | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(record.sequence) || (record.sequence as number) < 0 || typeof record.active !== "boolean" || !Array.isArray(record.itemIds)) return null;
+  if (record.itemIds.length > 200 || !record.itemIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 512)) return null;
+  return { sequence: record.sequence as number, active: record.active, itemIds: record.itemIds as string[] };
 }
 
 function handleSse(req: IncomingMessage, res: ServerResponse, store: InboxStore): void {
