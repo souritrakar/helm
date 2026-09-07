@@ -3,8 +3,8 @@
 A browser control + human-inbox interface for firstmate / Herdr.
 
 `helm` puts the exact Herdr terminal in the browser (a live terminal mirror) beside a **human
-inbox** — a structured view of every event that needs the human: approvals, decisions, credential
-requests, blockers, and anything else surfaced for attention — so the operator can instruct
+inbox** - a structured view of every event that needs the human: approvals, decisions, credential
+requests, blockers, and anything else surfaced for attention - so the operator can instruct
 firstmate/Herdr and act on what matters without re-reading the whole conversation.
 
 Runs as a service, packaged into a repeatable launch workflow, and is built to later be hosted for
