@@ -49,13 +49,10 @@ function statusDecisions(cfg: HelmConfig): InboxAdapter {
 function captainHolds(cfg: HelmConfig): InboxAdapter {
   return pollingAdapter("captain-holds", cfg.fmStateDir, async () => {
     const snapshot = await fleetSnapshot(cfg);
-    const tasks = new Map(snapshot.tasks.map((task) => [task.id, task]));
     return snapshot.backlog.records.filter(isStructuredBacklogRecord).filter((record) => record.captain_actionable).map((record) => {
-      const task = tasks.get(record.id);
-      const pane = task?.endpoint.target ?? cfg.captainPane;
       return open("captain-holds", record.id, { kind: "captain-held", urgency: "blocking", taskId: record.id,
         title: record.title ?? `Captain hold: ${record.id}`, detail: record.hold_reason ?? record.raw,
-        options: [], allowFreeform: true, respond: pane === undefined ? { channel: "none" } : { channel: "relay", target: pane }, evidence: [{ path: snapshot.backlog.path }],
+        options: [], allowFreeform: true, respond: cfg.captainPane === undefined ? { channel: "none" } : { channel: "relay", target: cfg.captainPane }, evidence: [{ path: snapshot.backlog.path }],
       });
     });
   });

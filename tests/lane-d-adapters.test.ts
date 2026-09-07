@@ -93,12 +93,12 @@ describe("output-match adapter", () => {
       socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
     }); });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    config = { ...config, outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Deploy failed" }] };
+    config = { ...config, captainPane: "w1:captain", outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Deploy failed" }] };
     const adapter = createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!;
     disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
     await vi.waitUntil(() => emitted.length > 0);
     expect(request).toMatchObject({ method: "events.subscribe", params: { subscriptions: [{ type: "pane.output_matched", pane_id: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] } });
-    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: "w1:p2" } }]);
+    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: "w1:captain" } }]);
   });
 
   it("uses the event source and emits every overlapping configured pattern", async () => {
@@ -179,7 +179,7 @@ describe("agent-state adapter", () => {
     const herdr = join(root, "herdr-initial");
     const agentState = join(root, "initial-agent-state");
     writeFileSync(agentState, "working");
-    writeFileSync(herdr, `#!/bin/sh\nif [ \"$(cat ${agentState})\" = blocked ]; then\n  printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-1\",\"agent_status\":\"blocked\",\"focused\":false}]}}'\nelse\n  printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-1\",\"agent_status\":\"working\",\"focused\":false}]}}'\nfi\n`);
+    writeFileSync(herdr, `#!/bin/sh\ncase \"$(cat ${agentState})\" in\n  blocked) printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-1\",\"agent_status\":\"blocked\",\"focused\":false}]}}' ;;\n  empty) printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[]}}' ;;\n  *) printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-1\",\"agent_status\":\"working\",\"focused\":false}]}}' ;;\nesac\n`);
     chmodSync(herdr, 0o755);
     config = { ...config, herdrBin: herdr };
     server = createServer((socket) => {
@@ -192,5 +192,24 @@ describe("agent-state adapter", () => {
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
     await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
     expect(emitted.at(-1)).toMatchObject([{ id: "agent-state:w1:p1", kind: "blocker" }]);
+  });
+
+  it("prunes a pane absent from the post-ready agent snapshot", async () => {
+    const herdr = join(root, "herdr-prune");
+    const agentState = join(root, "prune-agent-state");
+    writeFileSync(agentState, "blocked");
+    writeFileSync(herdr, `#!/bin/sh\nif [ \"$(cat ${agentState})\" = empty ]; then\n  printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[]}}'\nelse\n  printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-1\",\"agent_status\":\"blocked\",\"focused\":false}]}}'\nfi\n`);
+    chmodSync(herdr, 0o755);
+    config = { ...config, herdrBin: herdr };
+    server = createServer((socket) => {
+      connections.add(socket);
+      socket.once("data", () => {
+        writeFileSync(agentState, "empty");
+        socket.write('{"result":{"type":"subscription_started"}}\n');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    expect(emitted.at(-1)).toEqual([]);
   });
 });
