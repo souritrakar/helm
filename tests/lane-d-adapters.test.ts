@@ -67,6 +67,15 @@ describe("state record adapters", () => {
     expect(emitted.at(-1)).toMatchObject([{ id: "procevent:when-deploy.1.result", kind: "review", title: "Process event: fired", respond: { channel: "none" } }]);
     expect(() => stat(`${result.slice(0, -7)}.handled`)).toThrow();
   });
+
+  it("relays sensitive bearings gates to the configured firstmate pane", async () => {
+    const script = join(config.fmBinDir, "fm-bearings-snapshot.sh");
+    writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' '{\"schema\":\"fm-bearings.v1\",\"home\":\"fixture\",\"generated\":\"2026-09-07T00:00:00Z\",\"in_flight\":[],\"decisions_open\":[],\"gates\":[{\"id\":\"deploy\",\"title\":\"Merge deploy\",\"blocked_by\":\"main\",\"reason\":\"merge approval required\",\"owner\":\"captain\"}],\"landed\":[],\"reports\":[],\"omitted\":[]}'\n");
+    chmodSync(script, 0o755);
+    config = { ...config, captainPane: "w1:captain" };
+    await start(stateAdapter("bearings"));
+    expect(emitted.at(-1)).toMatchObject([{ kind: "merge", respond: { channel: "relay", target: "w1:captain" } }]);
+  });
 });
 
 function stat(path: string): void { statSync(path); }
@@ -141,7 +150,7 @@ describe("agent-state adapter", () => {
     const herdr = join(root, "herdr");
     const agentState = join(root, "agent-state");
     writeFileSync(agentState, "empty");
-    writeFileSync(herdr, `#!/bin/sh\nif [ \"$(cat ${agentState})\" = blocked ]; then\n  printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p9\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-9\",\"agent_status\":\"blocked\",\"focused\":false}]}}'\nelse\n  printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[]}}'\nfi\n`);
+    writeFileSync(herdr, `#!/bin/sh\ncase \"$(cat ${agentState})\" in\n  working) printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p9\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-9\",\"agent_status\":\"working\",\"focused\":false}]}}' ;;\n  blocked) printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p9\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-9\",\"agent_status\":\"blocked\",\"focused\":false}]}}' ;;\n  *) printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[]}}' ;;\nesac\n`);
     chmodSync(herdr, 0o755);
     config = { ...config, herdrBin: herdr };
     server = createServer((socket) => {
@@ -150,8 +159,10 @@ describe("agent-state adapter", () => {
         requests.push(JSON.parse(raw.toString()));
         socket.write('{"result":{"type":"subscription_started"}}\n');
         if (requests.length === 1) {
-          writeFileSync(agentState, "blocked");
+          writeFileSync(agentState, "working");
           socket.write('{"event":"pane_created","data":{"type":"pane_created","pane":{"pane_id":"w1:p9","terminal_id":"term-9","workspace_id":"w1","tab_id":"t1","focused":false,"agent_status":"working","revision":1}}}\n');
+        } else {
+          writeFileSync(agentState, "blocked");
         }
       });
     });

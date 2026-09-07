@@ -40,7 +40,7 @@ function statePath(cfg: HelmConfig, name: string): string { return join(cfg.fmSt
 
 function statusDecisions(cfg: HelmConfig): InboxAdapter {
   return pollingAdapter("status-decisions", cfg.fmStateDir, async () => (await scanOpenDecisions(cfg)).map((d) => open("status-decisions", `${d.taskId}:${d.key}`, {
-    kind: d.verb === "blocked" ? "blocker" : "status-decision", urgency: "blocking", taskId: d.taskId,
+    kind: "status-decision", urgency: "blocking", taskId: d.taskId,
     title: d.verb === "blocked" ? `Blocked: ${d.taskId}` : `Decision needed: ${d.taskId}`, detail: d.note,
     options: [], allowFreeform: false, respond: { channel: "resolve-key", target: d.taskId, key: d.key }, evidence: [{ path: statePath(cfg, `${d.taskId}.status`) }],
   })));
@@ -66,7 +66,7 @@ function bearings(cfg: HelmConfig): InboxAdapter {
     const snapshot = await bearingsSnapshot(cfg);
     return [
       ...snapshot.decisions_open.map((d) => open("bearings", `decision:${d.id}:${d.key}`, { kind: "decision", urgency: "attention", taskId: d.id, title: d.summary, detail: `${d.verb} — owner ${d.owner}`, options: [], allowFreeform: false, respond: { channel: "none" }, evidence: [{ path: join(cfg.fmHome, "data", "webface-plan", "report.md") }] })),
-      ...snapshot.gates.map((g) => open("bearings", `gate:${g.id}`, { kind: classifyGate(g.title, g.reason), urgency: "blocking", taskId: g.id, title: g.title, detail: g.reason, about: g.blocked_by, options: [], allowFreeform: false, respond: { channel: "none" }, evidence: [{ path: join(cfg.fmHome, "data", "webface-plan", "report.md") }] })),
+      ...snapshot.gates.map((g) => open("bearings", `gate:${g.id}`, { kind: classifyGate(g.title, g.reason), urgency: "blocking", taskId: g.id, title: g.title, detail: g.reason, about: g.blocked_by, options: [], allowFreeform: false, respond: cfg.captainPane === undefined ? { channel: "none" } : { channel: "relay", target: cfg.captainPane }, evidence: [{ path: join(cfg.fmHome, "data", "webface-plan", "report.md") }] })),
     ];
   });
 }

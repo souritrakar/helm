@@ -24,10 +24,11 @@ function agentState(config: HelmConfig): InboxAdapter {
       let generation = 0;
       let scheduled = Promise.resolve();
 
-      const subscribe = async (): Promise<void> => {
+      const subscribe = async (reconcileAfterReady = false): Promise<void> => {
         if (stopped) return;
-        const ownGeneration = ++generation;
+        const ownGeneration = generation + 1;
         const previous = current;
+        if (previous === undefined) generation = ownGeneration;
         const stream = subscribeEvents(config, [
           { type: "pane.created" },
           { type: "pane.closed" },
@@ -56,6 +57,12 @@ function agentState(config: HelmConfig): InboxAdapter {
         current = stream;
         reportStreamFailure("agent-state", stream);
         await stream.ready;
+        if (stopped) {
+          stream.close();
+          return;
+        }
+        generation = ownGeneration;
+        if (reconcileAfterReady) await reconcile();
         if (stopped || generation !== ownGeneration) stream.close();
         else previous?.close();
       };
@@ -69,7 +76,7 @@ function agentState(config: HelmConfig): InboxAdapter {
         ctx.emit([...blocked.values()]);
       };
       function queueSubscription(): void {
-        scheduled = scheduled.catch(() => undefined).then(reconcile).then(subscribe).catch((cause: unknown) => console.error("agent-state: subscription failed", cause));
+        scheduled = scheduled.catch(() => undefined).then(() => subscribe(true)).catch((cause: unknown) => console.error("agent-state: subscription failed", cause));
       }
 
       await subscribe();

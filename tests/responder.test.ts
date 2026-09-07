@@ -76,6 +76,7 @@ describe("routeChannel (D-C)", () => {
 
   it("permits resolve-key only for typed keyed status decisions", () => {
     expect(routeChannel(baseItem())).toBe("resolve-key");
+    expect(routeChannel(baseItem({ urgency: "blocking", title: "Blocked: task", detail: "blocked", kind: "status-decision" }))).toBe("resolve-key");
   });
 
   it("relays untyped or freeform decisions that declare resolve-key", () => {
