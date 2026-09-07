@@ -140,6 +140,10 @@ describe("events.subscribe stream", () => {
     });
   });
 
+  it("parses an output match, which also keeps its dotted wire name", () => {
+    expect(parseHerdrEvent('{"event":"pane.output_matched","data":{"pane_id":"w1:p3","matched_line":"ready","read":{"pane_id":"w1:p3","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"ready","revision":2,"truncated":false}}}')).toMatchObject({ event: "pane.output_matched", data: { matched_line: "ready" } });
+  });
+
   it("parses pane creation, which arrives under the underscored broadcast name", () => {
     const event = parseHerdrEvent(
       JSON.stringify({ event: "pane_created", data: { type: "pane_created", pane: PANE } }),

@@ -7,6 +7,7 @@ import { createFileAuditWriter } from "./audit";
 import { createAdapterRegistry, type AdapterRegistry } from "./adapters/registry";
 import { createInboxStore, type InboxStore } from "./inbox-store";
 import { createResponder, type Responder } from "./responder";
+import { registerProductionAdapters } from "./adapters";
 
 export interface InboxRuntime {
   readonly store: InboxStore;
@@ -27,6 +28,7 @@ export function createInboxRuntime(config: HelmConfig): InboxRuntime {
   const audit = createFileAuditWriter(config.helmStateDir);
   const responder = createResponder({ config, audit });
   const registry = createAdapterRegistry();
+  registerProductionAdapters(registry, config);
 
   return {
     store,

@@ -1,0 +1,94 @@
+/** Observable contracts for the Lane D read-only producers. */
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createHerdrAdapters } from "@/lib/adapters/herdr-events";
+import { registerProductionAdapters } from "@/lib/adapters";
+import { createAdapterRegistry } from "@/lib/adapters/registry";
+import { createStateAdapters } from "@/lib/adapters/state";
+import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
+import type { InboxItem } from "@/lib/types";
+
+let root = "";
+let config: HelmConfig;
+let emitted: InboxItem[][];
+let disposers: Disposable[];
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "helm-lane-d-"));
+  const fmHome = join(root, "firstmate");
+  mkdirSync(join(fmHome, "bin"), { recursive: true });
+  mkdirSync(join(fmHome, "state"), { recursive: true });
+  emitted = [];
+  disposers = [];
+  config = { fmHome, fmBinDir: join(fmHome, "bin"), fmStateDir: join(fmHome, "state"), helmStateDir: join(root, "helm-state"), herdrSocketPath: join(root, "herdr.sock"), herdrBin: "herdr", port: DEFAULT_PORT, bind: DEFAULT_BIND };
+});
+afterEach(() => { for (const disposer of disposers) disposer[Symbol.dispose](); rmSync(root, { recursive: true, force: true }); });
+
+async function start(adapter: ReturnType<typeof createStateAdapters>[number]): Promise<void> {
+  disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
+}
+function stateAdapter(id: string) { return createStateAdapters(config).find((adapter) => adapter.id === id)!; }
+
+describe("state record adapters", () => {
+  it("registers all eight production sources exactly once", () => {
+    const registry = createAdapterRegistry();
+    registerProductionAdapters(registry, config);
+    expect(registry.list().map((adapter) => adapter.id)).toEqual([
+      "status-decisions", "captain-holds", "bearings", "captain-notes", "steering-backlog", "procevent", "agent-state", "output-match",
+    ]);
+  });
+
+  it("renders a captain note as inert read-only detail without acknowledging it", async () => {
+    const inbox = join(config.fmStateDir, "inbox"); mkdirSync(inbox);
+    const note = join(inbox, "n-1.note"); writeFileSync(note, "id=n-1\nat=2026-09-07T00:00:00Z\n--\n<em>untrusted</em> ; $(nope)");
+    await start(stateAdapter("captain-notes"));
+    expect(emitted.at(-1)).toMatchObject([{ id: "captain-notes:n-1", detail: expect.stringContaining("$(nope)"), respond: { channel: "none" }, evidence: [{ path: note }] }]);
+    expect(() => stat(note)).not.toThrow();
+  });
+
+  it("surfaces unacknowledged steering records and excludes handled records", async () => {
+    const pending = join(config.fmStateDir, "worker.inbox"); mkdirSync(join(pending, "handled"), { recursive: true });
+    writeFileSync(join(pending, "001.msg"), "steer this"); writeFileSync(join(pending, "handled", "002.msg"), "old");
+    await start(stateAdapter("steering-backlog"));
+    expect(emitted.at(-1)).toHaveLength(1);
+    expect(emitted.at(-1)?.[0]).toMatchObject({ source: "steering-backlog", respond: { channel: "none" }, detail: "steer this" });
+  });
+
+  it("classifies an unhandled process result but never invokes handled or mutating commands", async () => {
+    const inbox = join(config.fmStateDir, "procevent-inbox"); mkdirSync(inbox);
+    const result = join(inbox, "when-deploy.1.result"); writeFileSync(result, "status: fired\noutput:\n<unsafe>");
+    const script = join(config.fmBinDir, "fm-procevent.sh");
+    writeFileSync(script, "#!/bin/sh\n[ \"$1\" = classify ] && { printf 'fired\\n'; exit 0; }\nexit 64\n"); chmodSync(script, 0o755);
+    await start(stateAdapter("procevent"));
+    expect(emitted.at(-1)).toMatchObject([{ id: "procevent:when-deploy.1.result", kind: "review", title: "Process event: fired", respond: { channel: "none" } }]);
+    expect(() => stat(`${result.slice(0, -7)}.handled`)).toThrow();
+  });
+});
+
+function stat(path: string): void { statSync(path); }
+
+describe("output-match adapter", () => {
+  let server: Server;
+  let connection: Socket | undefined;
+  afterEach(async () => { if (server.listening) { connection?.destroy(); await new Promise<void>((resolve) => server.close(() => resolve())); } });
+
+  it("subscribes with dotted output event names and raises a custom relay card", async () => {
+    let request: unknown;
+    server = createServer((socket) => { connection = socket; socket.once("data", (raw) => {
+      request = JSON.parse(raw.toString());
+      socket.write('{"result":{"type":"subscription_started"}}\n');
+      socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
+    }); });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    config = { ...config, outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Deploy failed" }] };
+    const adapter = createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!;
+    disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
+    await vi.waitUntil(() => emitted.length > 0);
+    expect(request).toMatchObject({ method: "events.subscribe", params: { subscriptions: [{ type: "pane.output_matched", pane_id: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] } });
+    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: "w1:p2" } }]);
+  });
+});

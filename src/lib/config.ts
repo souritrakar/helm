@@ -9,6 +9,7 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { z } from "zod";
 
 /** Thrown when the environment cannot produce a usable configuration. */
 export class ConfigError extends Error {
@@ -38,7 +39,29 @@ export interface HelmConfig {
   readonly herdrBin: string;
   readonly port: number;
   readonly bind: string;
+  /** Operator-declared, read-only Herdr output subscriptions (SPEC §5.4 tier 1). */
+  readonly outputMatches?: readonly OutputMatchConfig[];
+  /** Optional firstmate pane to receive relayed human replies. */
+  readonly captainPane?: string;
 }
+
+export interface OutputMatchConfig {
+  readonly id: string;
+  readonly paneId: string;
+  readonly source: "visible" | "recent" | "recent_unwrapped" | "detection";
+  readonly match: { readonly type: "substring" | "regex"; readonly value: string };
+  readonly title?: string;
+  readonly urgency?: "blocking" | "attention" | "fyi";
+}
+
+const outputMatchesSchema = z.array(z.object({
+  id: z.string().min(1),
+  paneId: z.string().min(1),
+  source: z.enum(["visible", "recent", "recent_unwrapped", "detection"]),
+  match: z.object({ type: z.enum(["substring", "regex"]), value: z.string().min(1) }),
+  title: z.string().min(1).optional(),
+  urgency: z.enum(["blocking", "attention", "fyi"]).optional(),
+}));
 
 export const DEFAULT_PORT = 7333;
 export const DEFAULT_BIND = "127.0.0.1";
@@ -66,7 +89,25 @@ export function loadConfig(env: ConfigEnv = process.env): HelmConfig {
     herdrBin: nonEmpty("HERDR_BIN", env.HERDR_BIN) ?? DEFAULT_HERDR_BIN,
     port: parsePort("HELM_PORT", env.HELM_PORT),
     bind: parseBind("HELM_BIND", env.HELM_BIND),
+    outputMatches: parseOutputMatches(env.HELM_OUTPUT_MATCHES),
+    captainPane: nonEmpty("HELM_CAPTAIN_PANE", env.HELM_CAPTAIN_PANE),
   };
+}
+
+function parseOutputMatches(raw: string | undefined): readonly OutputMatchConfig[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch (cause) {
+    throw new ConfigError(`HELM_OUTPUT_MATCHES must be JSON: ${errorMessage(cause)}`);
+  }
+  const parsed = outputMatchesSchema.safeParse(value);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
+    throw new ConfigError(`HELM_OUTPUT_MATCHES is invalid: ${issues}`);
+  }
+  return parsed.data;
 }
 
 /**
