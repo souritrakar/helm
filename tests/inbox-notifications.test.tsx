@@ -302,6 +302,23 @@ describe("inbox notification stream", () => {
     await awaitStream();
   });
 
+  it("starts notifications after an initial visibility failure", async () => {
+    cleanup();
+    FakeEventSource.current = null;
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: false, status: 503 })));
+    render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
+
+    const stream = await awaitStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:presence-unavailable"));
+    });
+
+    await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
+  });
+
   it("delivers only the current occurrence after a pending worker becomes active", async () => {
     let resolveReady: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
     Object.defineProperty(navigator, "serviceWorker", {

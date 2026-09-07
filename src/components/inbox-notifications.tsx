@@ -221,8 +221,8 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
   useEffect(() => {
     let cancelled = false;
     let stream: EventSource | null = null;
-    void visibilityReady.current.then((ready) => {
-      if (cancelled || !ready) return;
+    void visibilityReady.current.then(() => {
+      if (cancelled) return;
       stream = new EventSource("/api/events");
       stream.addEventListener("snapshot.begin", () => {
         snapshotting.current = true;
