@@ -5,22 +5,20 @@ import { Dialog } from "@base-ui/react/dialog";
 import {
   Check,
   CircleAlert,
-  CircleDot,
   CircleX,
   Clock3,
   Command,
   Inbox,
   LoaderCircle,
-  PanelLeft,
   ShieldAlert,
   Sparkles,
-  TerminalSquare,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Layout } from "react-resizable-panels";
 
 import { saveSplitLayout, splitDefaultLayout } from "@/components/split-layout";
+import { TerminalPane } from "@/components/terminal-pane";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -281,7 +279,7 @@ export function HelmShell({ defaultLayout }: { defaultLayout?: Layout }) {
         className="min-h-0 flex-1"
       >
         <ResizablePanel id="terminal" minSize="20%">
-          <TerminalPlaceholder />
+          <TerminalPane />
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel id="inbox" minSize="24%">
@@ -292,28 +290,6 @@ export function HelmShell({ defaultLayout }: { defaultLayout?: Layout }) {
       <ShortcutDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <Toaster position="bottom-right" richColors closeButton />
     </main>
-  );
-}
-
-function TerminalPlaceholder() {
-  return (
-    <section className="flex h-full min-w-0 flex-col bg-zinc-950 text-zinc-100">
-      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2 text-sm">
-          <TerminalSquare className="size-4 shrink-0" />
-          <span className="truncate font-medium">Terminal</span>
-          <span className="truncate font-mono text-xs text-zinc-400">Lane B mount point</span>
-        </div>
-        <span className="flex shrink-0 items-center gap-1.5 text-sm text-zinc-400"><CircleDot className="size-4 shrink-0 fill-emerald-400 text-emerald-400" />Waiting</span>
-      </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-        <div className="max-w-[38ch] text-center">
-          <PanelLeft className="mx-auto size-6 text-zinc-500" />
-          <h2 className="mt-3 text-lg font-semibold text-balance">Terminal bridge mounts here</h2>
-          <p className="mt-2 text-base/7 text-pretty text-zinc-400 sm:text-sm/6">This shell reserves the panel for Lane B&apos;s interactive terminal without taking terminal ownership.</p>
-        </div>
-      </div>
-    </section>
   );
 }
 
