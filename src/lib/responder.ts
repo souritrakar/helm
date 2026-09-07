@@ -125,6 +125,9 @@ export function createResponder(options: ResponderOptions): Responder {
             result = await executors.captainHold(item, answer);
             break;
           case "relay":
+            // Enforce before any executor (including test overrides) so a
+            // multi-line answer cannot reach paneRun.
+            requireRelaySingleLine(answer);
             result = await executors.relay(item, answer);
             break;
           default: {
@@ -238,6 +241,19 @@ async function defaultRelay(
   const message = `[helm ${item.id}] ${answer}`;
   const result = await paneRun(cfg, paneId, [message]);
   return toRelayResult(result);
+}
+
+/**
+ * paneRun submits one line followed by Enter. A tab, newline, or C0 control
+ * in the answer would become a second pane submission (captain decision
+ * `relay-answer-newline-splits-pane-input`).
+ */
+function requireRelaySingleLine(answer: string): void {
+  if (/[\t\n\r\u0000-\u001f\u007f]/.test(answer)) {
+    throw new ResponderError(
+      "relay answer must be a single line without tab, newline, or control characters; paneRun would submit each line separately",
+    );
+  }
 }
 
 function toRelayResult(result: ExecResult): RespondResult {

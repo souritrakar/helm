@@ -15,14 +15,31 @@ import { historyPath } from "./paths";
 import type { InboxItem, InboxItemState } from "./types";
 
 /** SSE event names the store emits. */
-export type InboxStoreEventType = "item.upsert" | "item.retract";
+export type InboxStoreEventType =
+  | "item.upsert"
+  | "item.retract"
+  | "snapshot.begin"
+  | "snapshot.end";
+
+/** Payload for {@link InboxStoreEventType} `snapshot.begin`. */
+export interface SnapshotBeginData {
+  readonly ids: readonly string[];
+}
+
+/** Payload for {@link InboxStoreEventType} `snapshot.end`. */
+export interface SnapshotEndData {
+  readonly count: number;
+}
 
 export interface InboxStoreEvent {
   /** Monotonic event id, serialized as the SSE `id:` field. */
   readonly id: number;
   readonly type: InboxStoreEventType;
-  /** Full item on upsert; `{ id }` on retract. */
-  readonly data: InboxItem | { readonly id: string };
+  /**
+   * Full item on upsert; `{ id }` on retract; snapshot begin/end carry the
+   * open-set boundary so a reconnecting client can drop phantom cards.
+   */
+  readonly data: InboxItem | { readonly id: string } | SnapshotBeginData | SnapshotEndData;
   readonly at: string;
 }
 
@@ -166,7 +183,7 @@ export class InboxStore {
   /**
    * Events with id greater than `lastEventId`, for SSE `Last-Event-ID` resume.
    * When `lastEventId` is null/undefined, returns an empty list — callers that
-   * need a cold snapshot should call {@link snapshotEvents}.
+   * need a cold snapshot should call {@link captureSnapshot}.
    */
   eventsSince(lastEventId: number | null | undefined): InboxStoreEvent[] {
     if (lastEventId === null || lastEventId === undefined || Number.isNaN(lastEventId)) {
@@ -188,7 +205,7 @@ export class InboxStore {
    * Whether `lastEventId` sits in the resumable window `[floor - 1, last]`.
    *
    * Outside that window (server restart, buffer eviction, or a future id) the
-   * caller must fall back to {@link snapshotEvents} instead of an empty replay.
+   * caller must fall back to {@link captureSnapshot} instead of an empty replay.
    */
   canResumeFrom(lastEventId: number): boolean {
     if (Number.isNaN(lastEventId)) return false;
@@ -201,15 +218,26 @@ export class InboxStore {
     return lastEventId >= floor - 1 && lastEventId <= last;
   }
 
-  /** Upsert events for every currently open item (cold SSE connect). */
-  snapshotEvents(): InboxStoreEvent[] {
-    const at = this.now();
-    return this.listOpen().map((item) => ({
-      id: 0,
-      type: "item.upsert" as const,
-      data: item,
-      at,
-    }));
+  /**
+   * Build a cold-connect / non-resumable snapshot with wire-level boundaries.
+   *
+   * Sequence: `snapshot.begin` (open ids) → `item.upsert` per open item →
+   * `snapshot.end`. Clients clear their open set on begin, apply upserts, and
+   * finish on end — so cards retracted while disconnected do not linger
+   * (captain decision `sse-snapshot-cannot-retract-stale-cards`).
+   *
+   * Events are assigned resume ids and retained in the buffer, but are not
+   * broadcast to live subscribers (those already hold a live stream).
+   */
+  captureSnapshot(): InboxStoreEvent[] {
+    const open = this.listOpen();
+    const events: InboxStoreEvent[] = [];
+    events.push(this.retainEvent({ type: "snapshot.begin", data: { ids: open.map((item) => item.id) } }));
+    for (const item of open) {
+      events.push(this.retainEvent({ type: "item.upsert", data: item }));
+    }
+    events.push(this.retainEvent({ type: "snapshot.end", data: { count: open.length } }));
+    return events;
   }
 
   /** Highest event id emitted so far (0 if none). */
@@ -224,18 +252,44 @@ export class InboxStore {
   ): InboxItem | undefined {
     const existing = this.items.get(id);
     if (existing === undefined) return undefined;
-    const handled: InboxItem = { ...existing, state, answeredAt };
-    this.items.set(id, handled);
-    this.emit({ type: "item.upsert", data: handled });
-    this.history.set(id, {
+    const record = {
       state,
       openedAt: existing.openedAt,
       answeredAt,
-    });
-    this.persistHistory();
+    };
+    // Persist before mutating the open set or emitting, so a disk failure
+    // cannot leave an answer half-applied (AC 11).
+    const previousHistory = this.history.get(id);
+    this.history.set(id, record);
+    try {
+      this.persistHistory();
+    } catch (cause) {
+      if (previousHistory === undefined) this.history.delete(id);
+      else this.history.set(id, previousHistory);
+      throw cause;
+    }
+    const handled: InboxItem = { ...existing, state, answeredAt };
     this.items.delete(id);
+    this.emit({ type: "item.upsert", data: handled });
     this.emit({ type: "item.retract", data: { id } });
     return handled;
+  }
+
+  /** Assign an id, retain in the resume buffer, do not notify listeners. */
+  private retainEvent(
+    partial: Omit<InboxStoreEvent, "id" | "at"> & { at?: string },
+  ): InboxStoreEvent {
+    const event: InboxStoreEvent = {
+      id: this.nextEventId++,
+      type: partial.type,
+      data: partial.data,
+      at: partial.at ?? this.now(),
+    };
+    this.eventBuffer.push(event);
+    while (this.eventBuffer.length > this.eventBufferSize) {
+      this.eventBuffer.shift();
+    }
+    return event;
   }
 
   private emit(partial: Omit<InboxStoreEvent, "id" | "at"> & { at?: string }): void {

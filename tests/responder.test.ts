@@ -265,4 +265,31 @@ describe("createResponder", () => {
     expect(audit.entries).toHaveLength(1);
     expect(audit.entries[0]?.ok).toBe(false);
   });
+
+  it("refuses a multi-line relay answer before paneRun", async () => {
+    const audit = createMemoryAuditWriter();
+    const responder = createResponder({
+      config: CONFIG,
+      audit,
+      exec: {
+        relay: async () => {
+          throw new Error("paneRun must not run for a multi-line answer");
+        },
+      },
+    });
+
+    const result = await responder.respond(
+      baseItem({
+        allowFreeform: true,
+        respond: { channel: "relay", target: "w1:p1" },
+      }),
+      { text: "approve\n/exit" },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toMatch(/single line/);
+    expect(audit.entries).toHaveLength(1);
+    expect(audit.entries[0]?.ok).toBe(false);
+  });
 });

@@ -8,6 +8,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { InboxStore, InboxStoreEvent } from "./inbox-store";
+import { requireOperator } from "./require-operator";
 import type { Responder } from "./responder";
 import type { InboxItem, RespondAction } from "./types";
 
@@ -47,7 +48,13 @@ export async function handleInboxHttp(
 
   const respondMatch = RESPOND_PATH.exec(pathname);
   if (respondMatch !== null && req.method === "POST") {
-    const id = decodeURIComponent(respondMatch[1] ?? "");
+    let id: string;
+    try {
+      id = decodeURIComponent(respondMatch[1] ?? "");
+    } catch {
+      json(res, 400, { ok: false, error: "inbox item id is not a valid URI component" });
+      return true;
+    }
     await handleRespond(req, res, deps, id);
     return true;
   }
@@ -74,15 +81,13 @@ function handleSse(req: IncomingMessage, res: ServerResponse, store: InboxStore)
       writeSse(res, event);
     }
   } else {
-    // Cold connect, or Last-Event-ID outside the buffer (restart / eviction):
-    // send the current open set. Snapshot events omit id so live ids stay
-    // authoritative after reconnect.
-    for (const event of store.snapshotEvents()) {
-      writeSse(res, event, { omitId: true });
+    // Cold connect or non-resumable Last-Event-ID: full snapshot with begin/end
+    // so the client drops phantom cards closed while offline.
+    for (const event of store.captureSnapshot()) {
+      writeSse(res, event);
     }
   }
 
-  // Comment heartbeat so proxies keep the socket open.
   const heartbeat = setInterval(() => {
     if (res.writableEnded) return;
     res.write(": heartbeat\n\n");
@@ -106,6 +111,12 @@ async function handleRespond(
   deps: InboxHttpDeps,
   id: string,
 ): Promise<void> {
+  const gate = requireOperator(req, { mutate: true });
+  if (!gate.allow) {
+    json(res, 403, { ok: false, error: gate.reason });
+    return;
+  }
+
   let body: unknown;
   try {
     body = await readJsonBody(req);
@@ -155,14 +166,17 @@ async function handleRespond(
 }
 
 /**
- * Enforce the card's answer contract at the API (captain decision
- * `freeform-not-enforced`, option a).
+ * Enforce the card's answer contract at the API (captain decisions
+ * `freeform-not-enforced` and `empty-options-value-bypass`).
  */
 export function validateRespondContract(item: InboxItem, action: RespondAction): string | null {
   if (action.text !== undefined && !item.allowFreeform) {
     return `item ${item.id} does not allow freeform text; choose one of the declared options`;
   }
-  if (action.value !== undefined && item.options.length > 0) {
+  if (action.value !== undefined) {
+    if (item.options.length === 0) {
+      return `item ${item.id} has no options; send freeform text with allowFreeform, not value`;
+    }
     const allowed = item.options.some((option) => option.value === action.value);
     if (!allowed) {
       return `value ${JSON.stringify(action.value)} is not among the options for item ${item.id}`;
@@ -196,19 +210,14 @@ function sseHeaders(): Record<string, string> {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
-    // Stop nginx / Caddy from buffering the stream into uselessness (SPEC D5).
     "X-Accel-Buffering": "no",
   };
 }
 
-function writeSse(
-  res: ServerResponse,
-  event: InboxStoreEvent,
-  options: { readonly omitId?: boolean } = {},
-): void {
+function writeSse(res: ServerResponse, event: InboxStoreEvent): void {
   if (res.writableEnded) return;
   const lines: string[] = [];
-  if (!options.omitId && event.id > 0) {
+  if (event.id > 0) {
     lines.push(`id: ${event.id}`);
   }
   lines.push(`event: ${event.type}`);

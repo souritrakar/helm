@@ -55,8 +55,11 @@ These are not style preferences. Each one protects something that fails silently
   `fm-captain-hold.sh` path (captain decision `dc-captain-hold-direct-path`). See
   `src/lib/responder.ts`.
 - **Respond API contract:** `POST /api/inbox/:id/respond` rejects freeform text when
-  `allowFreeform` is false, and rejects a `value` not in `item.options` (400). Enforcement is at
-  the API, not only in the UI (captain decision `freeform-not-enforced`).
+  `allowFreeform` is false, rejects a `value` not in `item.options`, and rejects `value` when
+  `options` is empty (use `text` with `allowFreeform`). Mutating calls go through
+  `requireOperator` (`src/lib/require-operator.ts`, SPEC D10) — Origin/Sec-Fetch-Site checks and
+  JSON Content-Type. Relay answers must be single-line (no tab/newline). SSE cold connect emits
+  `snapshot.begin` / upserts / `snapshot.end` so clients drop phantom cards.
 - **All Herdr access lives in `src/lib/herdr.ts`**, so a Herdr upgrade is a one-file change.
   `herdrDoctor` pins the minimum socket protocol.
 - Herdr names events asymmetrically: you **subscribe** with dots (`pane.created`) but events

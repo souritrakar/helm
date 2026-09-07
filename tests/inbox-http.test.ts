@@ -185,6 +185,59 @@ describe("POST /api/inbox/:id/respond", () => {
     expect(body.ok).toBe(true);
     expect(body.argv.at(-1)).toBe("ship it");
   });
+
+  it("returns 400 for value when options is empty", async () => {
+    store.reconcile("fake", [
+      {
+        ...item("k1"),
+        allowFreeform: false,
+        options: [],
+      },
+    ]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const res = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "whatever" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 403 for text/plain Content-Type (CSRF-simple type)", async () => {
+    store.reconcile("fake", [item("k1")]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const res = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ value: "yes" }),
+    });
+    expect(res.status).toBe(403);
+    expect(store.listOpen()).toHaveLength(1);
+  });
+
+  it("returns 403 for cross-site Sec-Fetch-Site", async () => {
+    store.reconcile("fake", [item("k1")]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const res = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Sec-Fetch-Site": "cross-site",
+        Origin: "https://evil.example",
+      },
+      body: JSON.stringify({ value: "yes" }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 400 for a malformed percent-escape in the id", async () => {
+    const res = await fetch(`${baseUrl}/api/inbox/%E0%A4%A/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "yes" }),
+    });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("GET /api/events SSE", () => {
@@ -210,8 +263,16 @@ describe("GET /api/events SSE", () => {
       return buffer;
     };
 
-    await readUntil((text) => text.includes("event: item.upsert") && text.includes("fake:k1"));
+    await readUntil(
+      (text) =>
+        text.includes("event: snapshot.begin") &&
+        text.includes("event: item.upsert") &&
+        text.includes("fake:k1") &&
+        text.includes("event: snapshot.end"),
+    );
+    expect(buffer).toContain("event: snapshot.begin");
     expect(buffer).toContain("event: item.upsert");
+    expect(buffer).toContain("event: snapshot.end");
     expect(buffer).toContain(inboxItemId("fake", "k1"));
 
     // Live event after subscribe.
@@ -247,7 +308,7 @@ describe("GET /api/events SSE", () => {
     await reader.cancel();
   });
 
-  it("falls back to a cold snapshot when Last-Event-ID is not resumable", async () => {
+  it("falls back to a bounded snapshot when Last-Event-ID is not resumable", async () => {
     store.reconcile("fake", [item("a"), item("b")]);
 
     const res = await fetch(`${baseUrl}/api/events`, {
@@ -257,13 +318,22 @@ describe("GET /api/events SSE", () => {
     if (reader === undefined) throw new Error("no body");
     const decoder = new TextDecoder();
     let buffer = "";
-    while (!(buffer.includes("fake:a") && buffer.includes("fake:b"))) {
+    while (
+      !(
+        buffer.includes("snapshot.begin") &&
+        buffer.includes("fake:a") &&
+        buffer.includes("fake:b") &&
+        buffer.includes("snapshot.end")
+      )
+    ) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
     }
+    expect(buffer).toContain("event: snapshot.begin");
     expect(buffer).toContain("fake:a");
     expect(buffer).toContain("fake:b");
+    expect(buffer).toContain("event: snapshot.end");
     await reader.cancel();
   });
 });
