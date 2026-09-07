@@ -91,8 +91,9 @@ function ipv6ProcAddress(bind: string): string | null {
 }
 
 function expandIpv6(address: string): number[] | null {
-  if (address.includes(".")) return null;
-  const halves = address.split("::");
+  const canonical = canonicalizeIpv6(address);
+  if (canonical === null) return null;
+  const halves = canonical.split("::");
   if (halves.length > 2) return null;
   const left = halves[0] === "" ? [] : halves[0]!.split(":");
   const right = halves.length === 1 || halves[1] === "" ? [] : halves[1]!.split(":");
@@ -101,6 +102,25 @@ function expandIpv6(address: string): number[] | null {
   if (halves.length === 1 && groups.length !== 8) return null;
   if (groups.length > 8) return null;
   return [...left, ...Array(8 - groups.length).fill("0"), ...right].map((group) => Number.parseInt(group, 16));
+}
+
+function canonicalizeIpv6(address: string): string | null {
+  if (!address.includes(".")) return address;
+  const lastColon = address.lastIndexOf(":");
+  if (lastColon === -1) return null;
+  const mapped = ipv4MappedGroups(address.slice(lastColon + 1));
+  if (mapped === null) return null;
+  return `${address.slice(0, lastColon + 1)}${mapped}`;
+}
+
+function ipv4MappedGroups(ipv4: string): string | null {
+  const octets = ipv4.split(".");
+  if (octets.length !== 4 || octets.some((octet) => !/^\d+$/.test(octet))) return null;
+  const values = octets.map(Number);
+  if (values.some((octet) => octet < 0 || octet > 255)) return null;
+  const high = ((values[0] as number) << 8) | (values[1] as number);
+  const low = ((values[2] as number) << 8) | (values[3] as number);
+  return `${high.toString(16)}:${low.toString(16)}`;
 }
 
 function reverseBytes(hex: string): string {

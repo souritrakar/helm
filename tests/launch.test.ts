@@ -43,6 +43,14 @@ describe("launch checks", () => {
 
     await expect(listenerPids({ bind: "localhost", port: address.port })).resolves.toContain(process.pid);
   });
+  it("matches an IPv4-mapped IPv6 listener to its procfs address", async () => {
+    server = createServer();
+    await new Promise<void>((resolve) => server!.listen(0, "::ffff:127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("expected TCP address");
+
+    await expect(listenerPids({ bind: "::ffff:127.0.0.1", port: address.port })).resolves.toContain(process.pid);
+  });
   it("accepts a busy endpoint only when the claimed instance is the real listener", async () => {
     server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const address = server.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
