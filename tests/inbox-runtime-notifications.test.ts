@@ -53,10 +53,10 @@ describe("native inbox notifications", () => {
     stateDir = mkdtempSync(join(tmpdir(), "helm-runtime-"));
     const runtime = createInboxRuntime({ ...CONFIG, helmStateDir: stateDir });
     const token = runtime.visibility.createSession();
-    runtime.visibility.update(token, true, [item("first").id]);
+    runtime.visibility.update(token, 0, true, [item("first").id]);
 
     runtime.store.reconcile("fake", [item("first")]);
-    runtime.visibility.update(token, false, []);
+    runtime.visibility.update(token, 1, false, []);
     runtime.store.reconcile("fake", [item("updated")]);
 
     expect(notify).not.toHaveBeenCalled();

@@ -114,19 +114,19 @@ async function handleVisibility(
   }
   const token = req.headers["x-helm-visibility-session"];
   const parsed = parseVisibility(body);
-  if (typeof token !== "string" || parsed === null || !visibility.update(token, parsed.active, parsed.itemIds)) {
+  if (typeof token !== "string" || parsed === null || !visibility.update(token, parsed.sequence, parsed.active, parsed.itemIds)) {
     json(res, 403, { ok: false, error: "valid helm visibility session is required" });
     return;
   }
   json(res, 200, { ok: true });
 }
 
-function parseVisibility(value: unknown): { readonly active: boolean; readonly itemIds: string[] } | null {
+function parseVisibility(value: unknown): { readonly sequence: number; readonly active: boolean; readonly itemIds: string[] } | null {
   if (typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
-  if (typeof record.active !== "boolean" || !Array.isArray(record.itemIds)) return null;
+  if (!Number.isSafeInteger(record.sequence) || (record.sequence as number) < 0 || typeof record.active !== "boolean" || !Array.isArray(record.itemIds)) return null;
   if (record.itemIds.length > 200 || !record.itemIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 512)) return null;
-  return { active: record.active, itemIds: record.itemIds as string[] };
+  return { sequence: record.sequence as number, active: record.active, itemIds: record.itemIds as string[] };
 }
 
 function handleSse(req: IncomingMessage, res: ServerResponse, store: InboxStore): void {

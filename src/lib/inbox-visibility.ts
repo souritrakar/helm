@@ -6,6 +6,7 @@ interface VisibilitySession {
   readonly itemIds: ReadonlySet<string>;
   readonly active: boolean;
   readonly updatedAt: number;
+  readonly sequence: number;
 }
 
 /**
@@ -18,16 +19,19 @@ export class InboxVisibility {
   createSession(): string {
     this.prune();
     const token = randomBytes(32).toString("base64url");
-    this.sessions.set(token, { itemIds: new Set(), active: false, updatedAt: Date.now() });
+    this.sessions.set(token, { itemIds: new Set(), active: false, updatedAt: Date.now(), sequence: -1 });
     return token;
   }
 
-  update(token: string, active: boolean, itemIds: readonly string[]): boolean {
-    if (!this.sessions.has(token)) return false;
+  update(token: string, sequence: number, active: boolean, itemIds: readonly string[]): boolean {
+    const current = this.sessions.get(token);
+    if (current === undefined) return false;
+    if (sequence <= current.sequence) return true;
     this.sessions.set(token, {
       active,
       itemIds: new Set(itemIds),
       updatedAt: Date.now(),
+      sequence,
     });
     this.prune();
     return true;

@@ -83,6 +83,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
 
   useEffect(() => {
     let cancelled = false;
+    let sequence = 0;
     const session = fetch("/api/inbox/visibility")
       .then(async (response) => {
         if (!response.ok) return null;
@@ -101,7 +102,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
         void fetch("/api/inbox/visibility", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Helm-Visibility-Session": token },
-          body: JSON.stringify({ active: document.visibilityState === "visible" && document.hasFocus(), itemIds }),
+          body: JSON.stringify({ sequence: sequence++, active: document.visibilityState === "visible" && document.hasFocus(), itemIds }),
         });
       });
     };

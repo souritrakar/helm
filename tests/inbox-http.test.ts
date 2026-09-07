@@ -134,7 +134,7 @@ describe("inbox visibility signal", () => {
     const rejected = await fetch(`${baseUrl}/api/inbox/visibility`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active: true, itemIds: ["fake:visible"] }),
+      body: JSON.stringify({ sequence: 0, active: true, itemIds: ["fake:visible"] }),
     });
     expect(rejected.status).toBe(403);
 
@@ -144,11 +144,35 @@ describe("inbox visibility signal", () => {
         "Content-Type": "application/json",
         "X-Helm-Visibility-Session": token,
       },
-      body: JSON.stringify({ active: true, itemIds: ["fake:visible"] }),
+      body: JSON.stringify({ sequence: 1, active: true, itemIds: ["fake:visible"] }),
     });
     expect(accepted.status).toBe(200);
     expect(visibility.itemIsVisible("fake:visible")).toBe(true);
     expect(store.listOpen()).toEqual([]);
+  });
+
+  it("ignores an older presence report after a newer focused report", async () => {
+    const session = await fetch(`${baseUrl}/api/inbox/visibility`);
+    const { token } = await session.json() as { token: string };
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Helm-Visibility-Session": token,
+    };
+
+    const focused = await fetch(`${baseUrl}/api/inbox/visibility`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ sequence: 2, active: true, itemIds: ["fake:visible"] }),
+    });
+    const delayedBlur = await fetch(`${baseUrl}/api/inbox/visibility`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ sequence: 1, active: false, itemIds: [] }),
+    });
+
+    expect(focused.status).toBe(200);
+    expect(delayedBlur.status).toBe(200);
+    expect(visibility.itemIsVisible("fake:visible")).toBe(true);
   });
 });
 
