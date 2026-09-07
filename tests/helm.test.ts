@@ -131,6 +131,7 @@ describe("helm launcher", () => {
 
       expect(result.status).toBe(1);
       expect(result.stdout).not.toContain("helm: started");
+      expect(result.stderr).toContain(`127.0.0.1:${String(port)} is held by a non-helm listener`);
     } finally {
       await new Promise<void>((resolve) => foreign.close(() => resolve()));
     }

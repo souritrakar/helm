@@ -69,7 +69,7 @@ wait_for_listen() {
     pid_is_live || return 1
     if (exec 3<>"/dev/tcp/$host/$2") 2>/dev/null; then
       endpoint_owned "$owner" && return 0
-      return 1
+      return 2
     fi
     sleep 0.2
   done
@@ -107,12 +107,19 @@ start() {
     wait "$!"
     return $?
   fi
-  local bind port
+  local bind port readiness
   if ! read -r bind port < <(endpoint); then echo "helm: refusing to start; the configuration is not usable" >&2; return 1; fi
   setsid pnpm --dir "$HELM_ROOT" start >> "$LOG_FILE" 2>&1 &
   write_pid "$!"
-  if wait_for_listen "$bind" "$port" "$(pid_from_file)"; then echo "helm: started (pid $(pid_from_file)) on $bind:$port"; return 0; fi
+  if wait_for_listen "$bind" "$port" "$(pid_from_file)"; then
+    echo "helm: started (pid $(pid_from_file)) on $bind:$port"; return 0
+  else
+    readiness=$?
+  fi
   terminate_recorded || true
+  if (( readiness == 2 )); then
+    echo "helm: failed to start; $bind:$port is held by a non-helm listener; see $LOG_FILE" >&2; return 1
+  fi
   echo "helm: failed to start; nothing is listening on $bind:$port; see $LOG_FILE" >&2; return 1
 }
 stop() {
