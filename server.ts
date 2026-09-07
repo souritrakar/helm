@@ -1,10 +1,10 @@
 /**
  * helm's HTTP server.
  *
- * A custom Node server rather than `next start`, because a later lane runs a
+ * A custom Node server rather than `next start`, because helm runs a
  * long-lived WebSocket carrying a child-process stdio stream, which cannot live
- * in a Next.js route handler (SPEC D5). Owning the `http.Server` from day one
- * means that lane attaches an upgrade handler instead of re-architecting.
+ * in a Next.js route handler (SPEC D5). Owning the `http.Server` lets helm
+ * attach the terminal upgrade handler alongside its HTTP surfaces.
  *
  * Lane C also serves SSE `/api/events` and `POST /api/inbox/:id/respond` here
  * so the event stream stays long-lived with `Last-Event-ID` resume. Lane G

@@ -42,8 +42,9 @@ These are not style preferences. Each one protects something that fails silently
 
 ### Shape decisions worth knowing
 
-- helm runs a **custom Node server** (`server.ts`), not `next start`, because a later lane serves a
-  long-lived WebSocket carrying a terminal stream. The scaffold uses Next 16 (current release);
+- helm runs a **custom Node server** (`server.ts`), not `next start`, because it serves a
+  long-lived WebSocket carrying a terminal stream. The custom server and terminal WebSocket
+  surface are documented in `README.md`; the scaffold uses Next 16 (current release);
   the SPEC, written earlier, says Next 15. Lane C also serves SSE `/api/events` and
   `POST /api/inbox/:id/respond` from that server; Lane G adds `GET`/`POST /api/inbox/visibility`
   (`src/lib/inbox-http.ts`).
