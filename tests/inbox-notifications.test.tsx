@@ -145,6 +145,21 @@ describe("inbox notification stream", () => {
     expect(screen.getByRole("status").textContent).toBe("1");
   });
 
+  it("removes a retracted announced card from the unread count", async () => {
+    const stream = openStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:retracted"));
+    });
+    await vi.waitFor(() => expect(screen.getByRole("status").textContent).toBe("1"));
+
+    act(() => stream.emit("item.retract", { id: "status:retracted" }));
+
+    expect(screen.getByRole("status").textContent).toBe("0");
+  });
+
   it("re-checks tab visibility after service-worker registration", async () => {
     let resolveRegistration: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
     Object.defineProperty(navigator, "serviceWorker", {

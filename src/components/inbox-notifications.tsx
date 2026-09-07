@@ -201,6 +201,9 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
       try {
         const { id } = JSON.parse((raw as MessageEvent<string>).data) as { id?: string };
         if (id !== undefined) {
+          if (blockingStates.current.get(id)?.announced) {
+            setUnreadBlocking((count) => Math.max(0, count - 1));
+          }
           blockingStates.current.delete(id);
         }
       } catch {
