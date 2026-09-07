@@ -8,7 +8,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-WorkingDirectory="@HELM_ROOT@"
+WorkingDirectory=@HELM_ROOT@
 Environment="FM_HOME=@FM_HOME@"
 Environment="HELM_STATE_DIR=@HELM_STATE_DIR@"
 # Captured from the validated configuration when bin/helm install-service ran.

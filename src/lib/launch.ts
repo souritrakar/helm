@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import type { HelmConfig, HelmEndpoint } from "./config";
 import { runArgv } from "./exec";
 import { herdrDoctor, type HerdrDoctorResult } from "./herdr";
-import { belongsToProcessGroup, listenerPid } from "./listener";
+import { belongsToProcessGroup, listenerPids } from "./listener";
 
 export interface LaunchDoctorResult {
   readonly ok: boolean;
@@ -50,12 +50,22 @@ export async function probePort(bind: string, port: number): Promise<PortProbe> 
 export function describeForeignListener(
   endpoint: HelmEndpoint,
   owner: number,
-  listener: number | null,
+  listeners: readonly number[],
 ): string {
   const address = `${endpoint.bind}:${endpoint.port}`;
-  return listener === null
-    ? `${address} is already in use, and helm could not identify the listener; the running helm instance (pid ${String(owner)}) does not listen there`
-    : `${address} is already in use by pid ${String(listener)}, which is not the running helm instance (pid ${String(owner)})`;
+  return listeners.length === 0
+    ? `${address} is already in use, and helm could not identify the listener; it cannot confirm that the running helm instance (pid ${String(owner)}) holds it`
+    : `${address} is already in use by pid ${listeners.map(String).join(" and ")}, not by the running helm instance (pid ${String(owner)})`;
+}
+
+/**
+ * Say that a free endpoint is not the one the instance serves.
+ *
+ * The instance may simply not have bound yet, so this names both causes rather
+ * than declaring the running server broken.
+ */
+export function describeUnboundEndpoint(endpoint: HelmEndpoint, owner: number): string {
+  return `${endpoint.bind}:${endpoint.port} is not bound by the running helm instance (pid ${String(owner)}); the instance may still be starting, or HELM_BIND and HELM_PORT may differ from the endpoint it bound`;
 }
 
 /** Name the specific reason the endpoint is unusable, never just "in use". */
@@ -92,15 +102,17 @@ export async function launchDoctor(
   if (pnpm === null) problems.push("pnpm is missing or not runnable; helm requires pnpm 9 or newer");
   else if (!versionAtLeast(pnpm, 9)) problems.push(`pnpm ${pnpm} is too old; helm requires pnpm 9 or newer`);
   let portHeldByHelm = false;
+  const owner = options.portOwnerPid;
   if (!portProbe.available) {
-    const owner = options.portOwnerPid;
     if (portProbe.code !== "EADDRINUSE" || owner === undefined) {
       problems.push(describePortProblem(config, portProbe.code));
     } else {
-      const listener = listenerPid(config.port);
-      portHeldByHelm = listener !== null && belongsToProcessGroup(listener, owner);
-      if (!portHeldByHelm) problems.push(describeForeignListener(config, owner, listener));
+      const listeners = listenerPids(config.port);
+      portHeldByHelm = listeners.some((pid) => belongsToProcessGroup(pid, owner));
+      if (!portHeldByHelm) problems.push(describeForeignListener(config, owner, listeners));
     }
+  } else if (owner !== undefined) {
+    problems.push(describeUnboundEndpoint(config, owner));
   }
   const linger = lingerResult.exitCode === 0 ? normalizeLinger(lingerResult.stdout) : "unknown";
 

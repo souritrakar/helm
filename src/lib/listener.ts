@@ -11,14 +11,16 @@ import { readFileSync, readdirSync, readlinkSync } from "node:fs";
 const LISTEN_STATE = "0A";
 const SOCKET_LINK = /^socket:\[(\d+)]$/;
 
-/** The pid listening on `port`, or `null` when no visible process owns it. */
-export function listenerPid(port: number): number | null {
+/**
+ * Every visible pid listening on `port`, in procfs order.
+ *
+ * One port can carry several listeners on different local addresses, so the
+ * caller must weigh them all rather than trust whichever procfs yields first.
+ */
+export function listenerPids(port: number): number[] {
   const inodes = listeningInodes(port);
-  if (inodes.size === 0) return null;
-  for (const pid of processIds()) {
-    if (ownsAnyInode(pid, inodes)) return pid;
-  }
-  return null;
+  if (inodes.size === 0) return [];
+  return processIds().filter((pid) => ownsAnyInode(pid, inodes));
 }
 
 /**

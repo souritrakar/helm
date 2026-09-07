@@ -126,26 +126,27 @@ status() {
   echo "helm: service=$unit process=$process bind=$endpoint_text"
   [[ "$unit" == "active" || "$process" == running* ]]
 }
-# `&`, `|`, and `\` are sed replacement syntax, so a path holding one would be
-# written into the unit mangled or would abort the loop mid-install.
-sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+# Each value becomes sed replacement text and then a systemd unit value: `\`, `&`,
+# and `|` are sed syntax, and a bare `%` is a systemd specifier systemd expands.
+unit_value() { printf '%s' "${1//%/%%}" | sed -e 's/[\\&|]/\\&/g'; }
 logs() { ensure_state_dir; [[ -f "$LOG_FILE" ]] && tail -n 200 "$LOG_FILE" || echo "helm: no service log at $LOG_FILE"; }
 install_service() {
   local unit_dir="$HOME/.config/systemd/user" template temp bind port fm_home linger_blocked=0
-  local root_pattern state_pattern fm_pattern
+  local root_pattern state_pattern fm_pattern bind_pattern
   # The config loader owns the FM_HOME and endpoint rules; a second copy here would
   # accept a unit that fails at every start, so ask the loader instead.
   if ! read -r bind port fm_home < <(service_config); then
     echo "helm: refusing to install the service; the configuration is not usable" >&2; return 1
   fi
-  root_pattern="$(sed_escape "$HELM_ROOT")"
-  state_pattern="$(sed_escape "$HELM_STATE_DIR")"
-  fm_pattern="$(sed_escape "$fm_home")"
+  root_pattern="$(unit_value "$HELM_ROOT")"
+  state_pattern="$(unit_value "$HELM_STATE_DIR")"
+  fm_pattern="$(unit_value "$fm_home")"
+  bind_pattern="$(unit_value "$bind")"
   mkdir -p "$unit_dir"
   for template in "$HELM_ROOT/systemd/helm.service" "$HELM_ROOT/systemd/helm-logrotate.service" "$HELM_ROOT/systemd/helm-logrotate.timer"; do
     temp="$(mktemp)"
     sed -e "s|@HELM_ROOT@|$root_pattern|g" -e "s|@HELM_STATE_DIR@|$state_pattern|g" -e "s|@FM_HOME@|$fm_pattern|g" \
-      -e "s|@HELM_BIND@|$bind|g" -e "s|@HELM_PORT@|$port|g" "$template" > "$temp"
+      -e "s|@HELM_BIND@|$bind_pattern|g" -e "s|@HELM_PORT@|$port|g" "$template" > "$temp"
     install -m 0644 "$temp" "$unit_dir/$(basename "$template")"; rm -f "$temp"
   done
   systemctl --user daemon-reload
