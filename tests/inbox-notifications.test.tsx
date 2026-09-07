@@ -109,6 +109,20 @@ describe("inbox notification stream", () => {
     expect(screen.getAllByRole("status")[0]?.textContent).toBe("0");
   });
 
+  it("announces an item once when it escalates from attention to blocking", async () => {
+    const stream = openStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("item.upsert", { ...blocking("status:escalation"), urgency: "attention" });
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:escalation"));
+    });
+
+    await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
+    expect(showNotification).toHaveBeenCalledWith("Captain action needed", expect.objectContaining({ tag: "status:escalation" }));
+  });
+
   it("re-checks tab visibility after service-worker registration", async () => {
     let resolveRegistration: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
     Object.defineProperty(navigator, "serviceWorker", {

@@ -71,8 +71,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
   const [unreadBlocking, setUnreadBlocking] = useState(0);
   const [permission, setPermission] = useState<NotificationPermissionState>(browserPermission);
   const serviceWorkerReady = useRef<Promise<ServiceWorkerRegistration | null>>(Promise.resolve(null));
-  const knownIds = useRef(new Set<string>());
-  const browserNotifiedIds = useRef(new Set<string>());
+  const blockingStates = useRef(new Map<string, { readonly announced: boolean; readonly suppressed: boolean }>());
   const snapshotting = useRef(false);
 
   useEffect(() => {
@@ -137,20 +136,39 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
     stream.addEventListener("item.upsert", (raw) => {
       const item = parseInboxEventItem((raw as MessageEvent<string>).data);
       if (item === null) return;
-      const isNew = !knownIds.current.has(item.id);
-      knownIds.current.add(item.id);
-      if (!isNew || snapshotting.current || item.urgency !== "blocking" || item.state !== "open") return;
+      if (item.state !== "open") return;
 
-      if (document.visibilityState === "visible" && itemIsVisible(item.id)) return;
+      const previous = blockingStates.current.get(item.id);
+      const nextState =
+        previous ?? {
+          announced: false,
+          suppressed: false,
+        };
+
+      if (item.urgency !== "blocking") {
+        blockingStates.current.set(item.id, nextState);
+        return;
+      }
+
+      if (snapshotting.current) {
+        blockingStates.current.set(item.id, { announced: false, suppressed: true });
+        return;
+      }
+
+      if (nextState.announced || nextState.suppressed) return;
+
+      if (document.visibilityState === "visible" && itemIsVisible(item.id)) {
+        blockingStates.current.set(item.id, { announced: false, suppressed: true });
+        return;
+      }
+      blockingStates.current.set(item.id, { announced: true, suppressed: false });
       setUnreadBlocking((count) => count + 1);
       toast.warning(item.title, { description: item.detail, id: `inbox:${item.id}` });
 
       if (
         document.visibilityState !== "visible" &&
-        browserPermission() === "granted" &&
-        !browserNotifiedIds.current.has(item.id)
+        browserPermission() === "granted"
       ) {
-        browserNotifiedIds.current.add(item.id);
         void serviceWorkerReady.current.then((registration) => {
           if (document.visibilityState !== "visible") {
             return registration?.showNotification(item.title, {
@@ -167,8 +185,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
       try {
         const { id } = JSON.parse((raw as MessageEvent<string>).data) as { id?: string };
         if (id !== undefined) {
-          knownIds.current.delete(id);
-          browserNotifiedIds.current.delete(id);
+          blockingStates.current.delete(id);
         }
       } catch {
         // Ignore a malformed internal event; the next snapshot restores state.

@@ -65,6 +65,6 @@ describe("native inbox notifications", () => {
     runtime.store.reconcile("fake", [item("re-raised")]);
 
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenLastCalledWith(CONFIG, "re-raised", "re-raised");
+    expect(notify).toHaveBeenLastCalledWith({ ...CONFIG, helmStateDir: stateDir }, "re-raised", "re-raised");
   });
 });
