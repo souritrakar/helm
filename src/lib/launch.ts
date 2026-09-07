@@ -11,7 +11,19 @@ export interface LaunchDoctorResult {
   readonly node: string;
   readonly pnpm: string | null;
   readonly linger: "yes" | "no" | "unknown";
+  /** The configured endpoint is in use, and the user in it is helm itself. */
+  readonly portHeldByHelm: boolean;
   readonly problems: readonly string[];
+}
+
+/** What the launcher knows about the running instance and doctor cannot observe. */
+export interface LaunchDoctorOptions {
+  /**
+   * pid of the helm instance the launcher's pidfile vouches for, when one runs.
+   * doctor is the operator diagnostic as well as the pre-start gate, so an
+   * endpoint that instance holds is healthy while a foreign holder is not.
+   */
+  readonly portOwnerPid?: number;
 }
 
 /** Why the configured endpoint could not be bound, or that it could. */
@@ -33,10 +45,6 @@ export async function probePort(bind: string, port: number): Promise<PortProbe> 
   });
 }
 
-export async function portIsAvailable(bind: string, port: number): Promise<boolean> {
-  return (await probePort(bind, port)).available;
-}
-
 /** Name the specific reason the endpoint is unusable, never just "in use". */
 export function describePortProblem(endpoint: HelmEndpoint, code: string): string {
   const address = `${endpoint.bind}:${endpoint.port}`;
@@ -53,7 +61,10 @@ export function describePortProblem(endpoint: HelmEndpoint, code: string): strin
 }
 
 /** Gather every launch prerequisite; this function is strictly read-only. */
-export async function launchDoctor(config: HelmConfig): Promise<LaunchDoctorResult> {
+export async function launchDoctor(
+  config: HelmConfig,
+  options: LaunchDoctorOptions = {},
+): Promise<LaunchDoctorResult> {
   const [herdr, pnpmResult, lingerResult, portProbe] = await Promise.all([
     herdrDoctor(config),
     runArgv("pnpm", ["--version"]),
@@ -67,10 +78,12 @@ export async function launchDoctor(config: HelmConfig): Promise<LaunchDoctorResu
   const pnpm = pnpmResult.exitCode === 0 ? pnpmResult.stdout.trim() : null;
   if (pnpm === null) problems.push("pnpm is missing or not runnable; helm requires pnpm 9 or newer");
   else if (!versionAtLeast(pnpm, 9)) problems.push(`pnpm ${pnpm} is too old; helm requires pnpm 9 or newer`);
-  if (!portProbe.available) problems.push(describePortProblem(config, portProbe.code));
+  const portHeldByHelm =
+    !portProbe.available && portProbe.code === "EADDRINUSE" && options.portOwnerPid !== undefined;
+  if (!portProbe.available && !portHeldByHelm) problems.push(describePortProblem(config, portProbe.code));
   const linger = lingerResult.exitCode === 0 ? normalizeLinger(lingerResult.stdout) : "unknown";
 
-  return { ok: problems.length === 0, herdr, node, pnpm, linger, problems };
+  return { ok: problems.length === 0, herdr, node, pnpm, linger, portHeldByHelm, problems };
 }
 
 export function versionAtLeast(version: string, minimumMajor: number): boolean {

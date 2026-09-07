@@ -1,6 +1,10 @@
 [Unit]
 Description=helm browser control and human inbox
 After=default.target
+# Restart=always would otherwise retry forever while a dependency such as Herdr
+# is down, because each failing start outlasts the systemd default interval.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
