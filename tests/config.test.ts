@@ -2,7 +2,7 @@
  * The config loader must fail loudly and specifically. A vague startup error
  * here costs an operator far more than the branch costs to test.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -32,6 +32,19 @@ describe("loadConfig", () => {
     expect(config.fmHome).toBe(home);
     expect(config.fmBinDir).toBe(join(home, "bin"));
     expect(config.fmStateDir).toBe(join(home, "state"));
+  });
+
+  it("defaults helm's writable state dir outside FM_HOME", () => {
+    const config = loadConfig({ FM_HOME: home, XDG_STATE_HOME: "/xdg-state" });
+
+    expect(config.helmStateDir).toBe("/xdg-state/helm");
+    expect(config.helmStateDir.startsWith(home)).toBe(false);
+  });
+
+  it("takes HELM_STATE_DIR when set", () => {
+    const config = loadConfig({ FM_HOME: home, HELM_STATE_DIR: "/var/lib/helm" });
+
+    expect(config.helmStateDir).toBe("/var/lib/helm");
   });
 
   it("defaults the bind address and port to loopback", () => {
@@ -83,6 +96,21 @@ describe("loadConfig", () => {
       () => ({ FM_HOME: home, HERDR_SOCKET_PATH: "herdr.sock" }),
       /must be an absolute path/,
     ],
+    [
+      "HELM_STATE_DIR relative",
+      () => ({ FM_HOME: home, HELM_STATE_DIR: "helm-state" }),
+      /HELM_STATE_DIR must be an absolute path/,
+    ],
+    [
+      "HELM_STATE_DIR equal to FM_HOME",
+      () => ({ FM_HOME: home, HELM_STATE_DIR: home }),
+      /must not be equal to or under FM_HOME/,
+    ],
+    [
+      "HELM_STATE_DIR under FM_HOME",
+      () => ({ FM_HOME: home, HELM_STATE_DIR: join(home, "state", "helm") }),
+      /must not be equal to or under FM_HOME/,
+    ],
   ])("rejects %s", (_label, buildEnv, expected) => {
     const env = buildEnv();
 
@@ -95,5 +123,14 @@ describe("loadConfig", () => {
     writeFileSync(file, "");
 
     expect(() => loadConfig({ FM_HOME: file })).toThrow(/is not a directory/);
+  });
+
+  it("rejects a state directory symlink that resolves under FM_HOME", () => {
+    const alias = join(emptyDir, "state-alias");
+    symlinkSync(join(home, "state"), alias);
+
+    expect(() => loadConfig({ FM_HOME: home, HELM_STATE_DIR: alias })).toThrow(
+      /must not be equal to or under FM_HOME/,
+    );
   });
 });

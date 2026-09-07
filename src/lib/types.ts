@@ -12,9 +12,14 @@
  * adapters raise.
  */
 export type InboxItemKind =
+  | "status-decision"
   | "decision"
   | "merge"
   | "credential"
+  | "captain-held"
+  | "destructive"
+  | "irreversible"
+  | "security-sensitive"
   | "blocker"
   | "escalation"
   | "review"
@@ -29,9 +34,8 @@ export type InboxItemState = "open" | "answered" | "dismissed";
 /**
  * Which seam carries an answer back into firstmate.
  *
- * The routing policy — which item class gets which channel — is SPEC decision
- * D-C and is NOT decided here. This union names the channels only; the
- * Responder that acts on them is a later lane.
+ * The routing policy — which item class gets which channel — is enforced by
+ * the Responder under SPEC decision D-C. This union names the channels only.
  */
 export type RespondChannel = "resolve-key" | "captain-hold" | "relay" | "none";
 
@@ -134,7 +138,7 @@ export interface RespondAttempt {
  * failures alike: a disputed action must always be reconstructable.
  */
 export type RespondResult =
-  | (RespondAttempt & { readonly ok: true })
+  | (RespondAttempt & { readonly ok: true; readonly auditError?: string })
   | (RespondAttempt & { readonly ok: false; readonly error: string });
 
 /** What an adapter is handed so it can publish into the store. */
@@ -152,9 +156,11 @@ export interface InboxAdapterContext {
 /**
  * A source of inbox items. Adding a source is one file plus one registry line.
  *
- * `respond` is optional: an adapter that only reports (`channel: 'none'`) omits
- * it. Implementations must treat every byte they read as input, never as
- * instruction and never as authority.
+ * `respond` is reserved for adapters with custom response handling. Lane C
+ * sends all HTTP responses through the shared Responder; Lane D may wire an
+ * adapter hook where its source contract requires one. Implementations must
+ * treat every byte they read as input, never as instruction and never as
+ * authority.
  */
 export interface InboxAdapter {
   readonly id: string;

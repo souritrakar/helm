@@ -31,8 +31,7 @@ These are not style preferences. Each one protects something that fails silently
    schema-validated field by field, so a contract drift fails loudly instead of mis-parsing.
 5. **helm is a channel, not an authority.** It never invents a close mode, maps a key to a task, or
    writes a decision record. Every `--resolve-key` value comes verbatim from the fold that produced
-   the card. The responder routing policy (SPEC decision D-C) is still the captain's call.
-   A task is addressed by its **id**: `fm-send.sh` resolves a bare exact task id natively
+   the card. A task is addressed by its **id**: `fm-send.sh` resolves a bare exact task id natively
    (`bin/fm-send.sh` lines 5-6, `fm_backend_task_id_for_selector` in `bin/fm-backend.sh`), so helm
    passes `task.id` verbatim and derives nothing. `actions.steer` is display and provenance text —
    a whole command line with a placeholder — and is **never** a send target. Building `fm-<id>` is
@@ -45,7 +44,27 @@ These are not style preferences. Each one protects something that fails silently
 
 - helm runs a **custom Node server** (`server.ts`), not `next start`, because a later lane serves a
   long-lived WebSocket carrying a terminal stream. The scaffold uses Next 16 (current release);
-  the SPEC, written earlier, says Next 15.
+  the SPEC, written earlier, says Next 15. Lane C also serves SSE `/api/events` and
+  `POST /api/inbox/:id/respond` from that server (`src/lib/inbox-http.ts`).
+- **Inbox core** lives under `src/lib/inbox-store.ts`, `responder.ts`, `adapters/`, and
+  `inbox-runtime.ts`. Adapters emit a full open set; the store reconciles by id. Answered history
+  and the audit log write under `HELM_STATE_DIR` (default `~/.local/state/helm`), never `$FM_HOME`.
+- **Responder routing (D-C, ratified 2026-09-06):** keyed status decisions → `resolve-key` (direct);
+  captain-held (`channel: "captain-hold"`), freeform, and anything merge/credential/destructive →
+  `relay` always. `routeChannel` forces that relay; it never selects the direct
+  `fm-captain-hold.sh` path (captain decision `dc-captain-hold-direct-path`). See
+  `src/lib/responder.ts`.
+- **Respond API contract:** `POST /api/inbox/:id/respond` rejects freeform text when
+  `allowFreeform` is false, rejects a `value` not in `item.options`, rejects `value` when
+  `options` is empty (use `text` with `allowFreeform`), and rejects bodies that send both
+  `value` and `text`. Mutating calls go through `requireOperator` (`src/lib/require-operator.ts`,
+  SPEC D10) — Host allowlist (loopback + bind), Origin/Sec-Fetch-Site, JSON Content-Type.
+  Relay answers and composed pane messages must be single-line (no tab/newline). SSE wire ids are
+  `<epoch>-<seq>`; a mismatched epoch forces `snapshot.begin` / upserts / `snapshot.end`.
+- **Answered history** is permanent for the life of the process data dir. Adapters (Lane D) must
+  use a **per-occurrence** natural key so a recurring condition raises a new card id rather than
+  staying suppressed forever (captain decision `answered-history-unbounded-and-permanent`: defer
+  prune/TTL).
 - **All Herdr access lives in `src/lib/herdr.ts`**, so a Herdr upgrade is a one-file change.
   `herdrDoctor` pins the minimum socket protocol.
 - Herdr names events asymmetrically: you **subscribe** with dots (`pane.created`) but events
