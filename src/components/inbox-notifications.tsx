@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { toast } from "sonner";
 
 type NotificationPermissionState = NotificationPermission | "unsupported";
-type BlockingNotificationState = { readonly announced: boolean; readonly suppressed: boolean };
+type BlockingNotificationState = { readonly announced: boolean; readonly suppressed: boolean; readonly generation: number };
 
 interface NotificationContextValue {
   readonly unreadBlocking: number;
@@ -98,12 +98,15 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
   const [permission, setPermission] = useState<NotificationPermissionState>(browserPermission);
   const serviceWorkerReady = useRef<Promise<ServiceWorkerRegistration | null>>(Promise.resolve(null));
   const blockingStates = useRef(new Map<string, BlockingNotificationState>());
+  const notificationGeneration = useRef(0);
   const snapshotStates = useRef<Map<string, BlockingNotificationState> | null>(null);
   const snapshotting = useRef(false);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    serviceWorkerReady.current = navigator.serviceWorker.register("/helm-sw.js").catch(() => null);
+    serviceWorkerReady.current = navigator.serviceWorker.register("/helm-sw.js")
+      .then(() => navigator.serviceWorker.ready)
+      .catch(() => null);
   }, []);
 
   useEffect(() => {
@@ -182,12 +185,14 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
         previous ?? {
           announced: false,
           suppressed: false,
+          generation: 0,
         };
 
       if (snapshotting.current) {
         snapshotStates.current?.set(item.id, {
           announced: false,
           suppressed: item.urgency === "blocking",
+          generation: 0,
         });
         return;
       }
@@ -196,17 +201,18 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
         if (nextState.announced) {
           setUnreadBlocking((count) => Math.max(0, count - 1));
         }
-        blockingStates.current.set(item.id, { announced: false, suppressed: false });
+        blockingStates.current.set(item.id, { announced: false, suppressed: false, generation: 0 });
         return;
       }
 
       if (nextState.announced || nextState.suppressed) return;
 
       if (document.visibilityState === "visible" && itemIsVisible(item.id)) {
-        blockingStates.current.set(item.id, { announced: false, suppressed: true });
+        blockingStates.current.set(item.id, { announced: false, suppressed: true, generation: 0 });
         return;
       }
-      blockingStates.current.set(item.id, { announced: true, suppressed: false });
+      const generation = ++notificationGeneration.current;
+      blockingStates.current.set(item.id, { announced: true, suppressed: false, generation });
       setUnreadBlocking((count) => count + 1);
       toast.warning(item.title, { description: item.detail, id: `inbox:${item.id}` });
 
@@ -215,7 +221,10 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
         browserPermission() === "granted"
       ) {
         void serviceWorkerReady.current.then((registration) => {
-          if (document.visibilityState !== "visible" && blockingStates.current.get(item.id)?.announced) {
+          if (
+            document.visibilityState !== "visible" &&
+            blockingStates.current.get(item.id)?.generation === generation
+          ) {
             return registration?.showNotification(item.title, {
               body: item.detail,
               tag: item.id,

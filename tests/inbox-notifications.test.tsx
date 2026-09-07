@@ -59,7 +59,7 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ token: "session" }) })));
   Object.defineProperty(navigator, "serviceWorker", {
     configurable: true,
-    value: { register: vi.fn(() => Promise.resolve({ showNotification })) },
+    value: { register: vi.fn(() => Promise.resolve({ showNotification })), ready: Promise.resolve({ showNotification }) },
   });
   render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
   await vi.waitFor(() => expect(navigator.serviceWorker.register).toHaveBeenCalledWith("/helm-sw.js"));
@@ -248,5 +248,31 @@ describe("inbox notification stream", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(showNotification).not.toHaveBeenCalled();
+  });
+
+  it("delivers only the current occurrence after a pending worker becomes active", async () => {
+    let resolveReady: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        register: vi.fn(() => Promise.resolve({ showNotification })),
+        ready: new Promise((resolve) => { resolveReady = resolve; }),
+      },
+    });
+    cleanup();
+    render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
+    const stream = openStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:reraised-pending"));
+      stream.emit("item.retract", { id: "status:reraised-pending" });
+      stream.emit("item.upsert", { ...blocking("status:reraised-pending"), title: "Replacement action needed" });
+      resolveReady?.({ showNotification });
+    });
+
+    await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
+    expect(showNotification).toHaveBeenCalledWith("Replacement action needed", expect.objectContaining({ tag: "status:reraised-pending" }));
   });
 });
