@@ -34,7 +34,7 @@ describe("helm launcher", () => {
     const state = join(directory, "state");
     mkdirSync(commands); mkdirSync(state);
     writeCommand(commands, "pnpm", [
-      'if [[ "$*" == *"helm-state-config.ts"* ]]; then printf "%s\\n" "$HELM_STATE_DIR"; exit 0; fi',
+      'if [[ "$*" == *"helm-state-config.ts"* || "$*" == *"helm-state-dir.ts"* ]]; then printf "%s\\n" "$HELM_STATE_DIR"; exit 0; fi',
       `if [[ "$1" == "--dir" && "$2" == "${root}" && "$3" == "start" ]]; then exec sleep 30; fi`,
     ].join("\n"));
     const child = spawn(join(root, "bin/helm"), ["start"], {
@@ -121,7 +121,7 @@ describe("helm launcher", () => {
     const address = foreign.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
     const port = address.port;
     writeCommand(commands, "pnpm", [
-      'if [[ "$*" == *"helm-state-config.ts"* ]]; then printf "%s\\n" "$HELM_STATE_DIR"; exit 0; fi',
+      'if [[ "$*" == *"helm-state-config.ts"* || "$*" == *"helm-state-dir.ts"* ]]; then printf "%s\\n" "$HELM_STATE_DIR"; exit 0; fi',
       'if [[ "$*" == *"helm-doctor.ts"* ]]; then exit 0; fi',
       'if [[ "$*" == *"helm-endpoint.ts"* ]]; then printf "127.0.0.1 ' + String(port) + '\\n"; exit 0; fi',
       'if [[ "$*" == *"helm-endpoint-owner.ts"* ]]; then exit 1; fi',
@@ -167,6 +167,36 @@ describe("helm launcher", () => {
     expect(status.status).toBe(1);
     expect(status.stderr).toContain("must not be equal to or under FM_HOME");
     expect(existsSync(pidFile)).toBe(true);
+  });
+
+  it("rotates logs without FM_HOME when the state directory is valid", () => {
+    const directory = workspace();
+    const state = join(directory, "state");
+    mkdirSync(state);
+    writeFileSync(join(state, "helm.log"), "keep\n");
+    const env = { ...process.env, HELM_STATE_DIR: state };
+    delete env.FM_HOME;
+    const result = spawnSync(join(root, "bin/helm"), ["rotate-logs"], { encoding: "utf8", env });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(state, "helm.log"), "utf8")).toBe("keep\n");
+    expect(existsSync(join(state, "helm.log.1"))).toBe(false);
+  });
+
+  it("refuses rotate-logs under FM_HOME before creating state", () => {
+    const directory = workspace();
+    const fmHome = join(directory, "firstmate");
+    const state = join(fmHome, "helm-state");
+    mkdirSync(join(fmHome, "bin"), { recursive: true });
+    mkdirSync(join(fmHome, "state"));
+    const result = spawnSync(join(root, "bin/helm"), ["rotate-logs"], {
+      encoding: "utf8",
+      env: { ...process.env, FM_HOME: fmHome, HELM_STATE_DIR: state },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must not be equal to or under FM_HOME");
+    expect(existsSync(state)).toBe(false);
   });
 });
 

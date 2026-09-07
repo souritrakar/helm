@@ -7,14 +7,16 @@ readonly PID_FILE="$HELM_STATE_DIR/helm.pid"
 readonly LOG_FILE="$HELM_STATE_DIR/helm.log"
 usage() { echo "usage: bin/helm {doctor|build|start|stop|status|logs|install-service}" >&2; }
 state_config() { pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-state-config.ts"; }
-validate_state_dir() {
+state_dir_only() { pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-state-dir.ts"; }
+require_state_dir() {
   local configured
-  configured="$(state_config)" || return 1
+  configured="$("$@")" || return 1
   if [[ "$configured" != "$HELM_STATE_DIR" ]]; then
     echo "helm: refusing state directory $HELM_STATE_DIR; validated configuration selected $configured" >&2
     return 1
   fi
 }
+validate_state_dir() { require_state_dir state_config; }
 ensure_state_dir() { validate_state_dir; mkdir -p "$HELM_STATE_DIR"; }
 # /proc/<pid>/stat field <n>, counted as procfs numbers them; comm may contain spaces.
 proc_field() {
@@ -43,7 +45,8 @@ signal_target() {
 }
 remove_stale_pid() { validate_state_dir; [[ -e "$PID_FILE" ]] && ! pid_is_live && rm -f "$PID_FILE" || true; }
 rotate_logs() {
-  ensure_state_dir
+  require_state_dir state_dir_only
+  mkdir -p "$HELM_STATE_DIR"
   local max_bytes=$((10 * 1024 * 1024)) index
   [[ -f "$LOG_FILE" && $(wc -c < "$LOG_FILE") -ge $max_bytes ]] || return 0
   for ((index=4; index>=1; index--)); do [[ -f "$LOG_FILE.$index" ]] && mv -f "$LOG_FILE.$index" "$LOG_FILE.$((index + 1))"; done

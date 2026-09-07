@@ -131,6 +131,20 @@ function parseOutputMatches(raw: string | undefined): readonly OutputMatchConfig
 }
 
 /**
+ * Resolve helm's writable state directory without requiring FM_HOME.
+ *
+ * Relative paths are rejected. When FM_HOME is an absolute path, a state
+ * directory equal to or under it is rejected so helm never writes there.
+ */
+export function loadHelmStateDir(env: ConfigEnv = process.env): string {
+  const fmHome = env.FM_HOME?.trim();
+  return resolveHelmStateDir(
+    env,
+    fmHome !== undefined && fmHome !== "" && isAbsolute(fmHome) ? fmHome : undefined,
+  );
+}
+
+/**
  * `$HELM_STATE_DIR`, or `$XDG_STATE_HOME/helm`, or `$HOME/.local/state/helm`.
  *
  * The directory need not exist yet — the store and audit log create it on first
@@ -139,18 +153,20 @@ function parseOutputMatches(raw: string | undefined): readonly OutputMatchConfig
  * also rejected so answered-history and the audit log can never write under
  * `$FM_HOME` (AGENTS.md hard rule 1).
  */
-function resolveHelmStateDir(env: ConfigEnv, fmHome: string): string {
+function resolveHelmStateDir(env: ConfigEnv, fmHome: string | undefined): string {
   const explicit = nonEmpty("HELM_STATE_DIR", env.HELM_STATE_DIR);
   const value = explicit ?? join(stateHome(env), "helm");
   if (!isAbsolute(value)) {
     throw new ConfigError(`HELM_STATE_DIR must be an absolute path, got ${JSON.stringify(value)}`);
   }
-  const resolvedFmHome = realpathSync(fmHome);
-  const resolvedStateDir = resolveExistingPath(value);
-  if (isPathInsideOrEqual(resolvedStateDir, resolvedFmHome)) {
-    throw new ConfigError(
-      `HELM_STATE_DIR ${JSON.stringify(value)} must not be equal to or under FM_HOME ${JSON.stringify(fmHome)}; helm must never write under $FM_HOME`,
-    );
+  if (fmHome !== undefined) {
+    const resolvedFmHome = resolveExistingPath(fmHome);
+    const resolvedStateDir = resolveExistingPath(value);
+    if (isPathInsideOrEqual(resolvedStateDir, resolvedFmHome)) {
+      throw new ConfigError(
+        `HELM_STATE_DIR ${JSON.stringify(value)} must not be equal to or under FM_HOME ${JSON.stringify(fmHome)}; helm must never write under $FM_HOME`,
+      );
+    }
   }
   return value;
 }
