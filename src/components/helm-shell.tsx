@@ -28,6 +28,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/sonner";
+import { useInboxNotifications } from "@/components/inbox-notifications";
 import { inboxItemId } from "@/lib/types";
 import type { InboxItem, InboxItemKind, InboxItemState, InboxUrgency } from "@/lib/types";
 
@@ -223,6 +224,7 @@ export function HelmShell({ defaultLayout }: { defaultLayout?: Layout }) {
   const [displayState, setDisplayState] = useState<DisplayState>("ready");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [compact, setCompact] = useState(false);
+  const { unreadBlocking, permission, requestPermission } = useInboxNotifications();
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 767px)");
@@ -257,11 +259,16 @@ export function HelmShell({ defaultLayout }: { defaultLayout?: Layout }) {
             <p className="hidden text-sm/5 text-muted-foreground sm:block">Fleet terminal and captain inbox.</p>
           </div>
         </div>
-        <Button variant="outline" onClick={() => setShortcutsOpen(true)} className="shrink-0 text-muted-foreground" aria-label="Show keyboard shortcuts">
-          <Command className="size-4 shrink-0" />
-          <span className="hidden sm:inline">Shortcuts</span>
-          <kbd className="font-mono text-xs">?</kbd>
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {unreadBlocking > 0 && <span aria-label={`${unreadBlocking} unread blocking inbox ${unreadBlocking === 1 ? "item" : "items"}`} className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 font-mono text-xs font-semibold tabular-nums text-white">{unreadBlocking}</span>}
+          {permission === "default" && <Button variant="outline" size="sm" onClick={() => void requestPermission()} aria-label="Enable desktop notifications">Enable alerts</Button>}
+          {permission === "denied" && <span className="hidden text-xs text-muted-foreground md:inline">Desktop alerts blocked</span>}
+          <Button variant="outline" onClick={() => setShortcutsOpen(true)} className="shrink-0 text-muted-foreground" aria-label="Show keyboard shortcuts">
+            <Command className="size-4 shrink-0" />
+            <span className="hidden sm:inline">Shortcuts</span>
+            <kbd className="font-mono text-xs">?</kbd>
+          </Button>
+        </div>
       </header>
 
       <ResizablePanelGroup
@@ -371,7 +378,7 @@ function InboxCard({ item }: { item: InboxItem }) {
   };
 
   return (
-    <article className="@container min-w-0">
+    <article className="@container min-w-0" data-inbox-item-id={item.id}>
       <div className="flex min-w-0 items-start gap-3">
         <UrgencyIcon urgency={item.urgency} />
         <div className="min-w-0 flex-1">
