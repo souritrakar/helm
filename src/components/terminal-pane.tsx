@@ -59,6 +59,8 @@ export function TerminalPane() {
     fit.fit();
     terminalRef.current = terminal;
     let disposed = false;
+    let lastPaneIds = "";
+    let lastSelectedPaneId: string | null = null;
 
     const connect = (): void => {
       if (disposed) return;
@@ -78,7 +80,13 @@ export function TerminalPane() {
         let message: ServerMessage;
         try { message = JSON.parse(event.data) as ServerMessage; } catch { return; }
         if (message.type === "terminal.panes") {
-          setPanes(message.panes); setSelectedPaneId(message.selectedPaneId); setNotice(""); setSendError("");
+          const nextPaneIds = message.panes.map((pane) => pane.id).sort().join("\n");
+          const changed = lastSelectedPaneId !== message.selectedPaneId || lastPaneIds !== nextPaneIds;
+          lastPaneIds = nextPaneIds;
+          lastSelectedPaneId = message.selectedPaneId;
+          setPanes(message.panes);
+          setSelectedPaneId(message.selectedPaneId);
+          if (changed) { setNotice(""); setSendError(""); }
         } else if (message.type === "terminal.status") {
           setStatus(message.status); setDetail(typeof message.reason === "string" ? message.reason : "");
         } else if (message.type === "terminal.notice") {
