@@ -10,8 +10,16 @@ import { ConfigError, loadConfig } from "../src/lib/config";
 
 try {
   const config = loadConfig();
+  requireUnitSafe("FM_HOME", config.fmHome);
+  requireUnitSafe("HELM_BIND", config.bind);
   process.stdout.write(`${config.bind} ${config.port} ${config.fmHome}\n`);
 } catch (cause) {
   console.error(`helm: ${cause instanceof ConfigError ? cause.message : String(cause)}`);
   process.exitCode = 1;
+}
+
+function requireUnitSafe(label: string, value: string) {
+  if (/[\p{Cc}"'\\]/u.test(value)) {
+    throw new ConfigError(`${label} contains systemd unit syntax requiring escaping`);
+  }
 }

@@ -51,6 +51,7 @@ doctor() {
   pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-doctor.ts" ${owner[@]+"${owner[@]}"}
 }
 endpoint() { pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-endpoint.ts"; }
+endpoint_owned() { pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-endpoint-owner.ts" "$1"; }
 service_config() { pnpm --dir "$HELM_ROOT" exec tsx "$HELM_ROOT/bin/helm-service-config.ts"; }
 # `systemctl is-active` exits nonzero throughout the Restart= back-off, when systemd
 # still owns the unit and is about to start it again, so read the state itself.
@@ -61,12 +62,15 @@ probe_address() {
   case "$1" in 0.0.0.0|"") echo "127.0.0.1" ;; ::|::0) echo "::1" ;; *) echo "$1" ;; esac
 }
 wait_for_listen() {
-  local host deadline
+  local host deadline owner="$3"
   host="$(probe_address "$1")"
   deadline=$((SECONDS + 30))
   while (( SECONDS < deadline )); do
     pid_is_live || return 1
-    if (exec 3<>"/dev/tcp/$host/$2") 2>/dev/null; then return 0; fi
+    if (exec 3<>"/dev/tcp/$host/$2") 2>/dev/null; then
+      endpoint_owned "$owner" && return 0
+      return 1
+    fi
     sleep 0.2
   done
   return 1
@@ -107,7 +111,7 @@ start() {
   if ! read -r bind port < <(endpoint); then echo "helm: refusing to start; the configuration is not usable" >&2; return 1; fi
   setsid bash -c 'cd "$1" && exec pnpm start' helm "$HELM_ROOT" >> "$LOG_FILE" 2>&1 &
   write_pid "$!"
-  if wait_for_listen "$bind" "$port"; then echo "helm: started (pid $(pid_from_file)) on $bind:$port"; return 0; fi
+  if wait_for_listen "$bind" "$port" "$(pid_from_file)"; then echo "helm: started (pid $(pid_from_file)) on $bind:$port"; return 0; fi
   terminate_recorded || true
   echo "helm: failed to start; nothing is listening on $bind:$port; see $LOG_FILE" >&2; return 1
 }

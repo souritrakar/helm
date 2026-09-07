@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -67,6 +68,51 @@ describe("helm launcher", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("HELM_STATE_DIR contains systemd unit syntax requiring escaping");
     expect(existsSync(join(home, ".config/systemd/user"))).toBe(false);
+  });
+
+  it("rejects a newline-bearing FM_HOME before serializing service configuration", () => {
+    const directory = workspace();
+    const fmHome = join(directory, "firstmate\nunsafe");
+    const home = join(directory, "home");
+    mkdirSync(join(fmHome, "bin"), { recursive: true });
+    mkdirSync(join(fmHome, "state"));
+    mkdirSync(home);
+    const result = spawnSync(join(root, "bin/helm"), ["install-service"], {
+      encoding: "utf8",
+      env: { ...process.env, FM_HOME: fmHome, HOME: home, HELM_STATE_DIR: join(directory, "state") },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("FM_HOME contains systemd unit syntax requiring escaping");
+    expect(existsSync(join(home, ".config/systemd/user"))).toBe(false);
+  });
+
+  it("does not report a foreign listener as a successful start", async () => {
+    const directory = workspace();
+    const commands = join(directory, "bin");
+    const state = join(directory, "state");
+    mkdirSync(commands); mkdirSync(state);
+    const foreign = createServer();
+    await new Promise<void>((resolve) => foreign.listen(0, "127.0.0.1", resolve));
+    const address = foreign.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
+    const port = address.port;
+    writeCommand(commands, "pnpm", [
+      'if [[ "$*" == *"helm-doctor.ts"* ]]; then exit 0; fi',
+      'if [[ "$*" == *"helm-endpoint.ts"* ]]; then printf "127.0.0.1 ' + String(port) + '\\n"; exit 0; fi',
+      'if [[ "$*" == *"helm-endpoint-owner.ts"* ]]; then exit 1; fi',
+      'if [[ "${!#}" == "start" ]]; then exec sleep 30; fi',
+    ].join("\n"));
+    try {
+      const result = spawnSync(join(root, "bin/helm"), ["start"], {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${commands}:${process.env.PATH}`, HELM_STATE_DIR: state },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).not.toContain("helm: started");
+    } finally {
+      await new Promise<void>((resolve) => foreign.close(() => resolve()));
+    }
   });
 });
 
