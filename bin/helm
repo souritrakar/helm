@@ -102,13 +102,19 @@ status() {
 logs() { ensure_state_dir; [[ -f "$LOG_FILE" ]] && tail -n 200 "$LOG_FILE" || echo "helm: no service log at $LOG_FILE"; }
 install_service() {
   local unit_dir="$HOME/.config/systemd/user" template temp bind port linger_blocked=0
+  if [[ -z "${FM_HOME:-}" ]]; then
+    echo "helm: FM_HOME must be set to a readable firstmate home before installing the service" >&2; return 1
+  fi
+  if [[ ! -d "$FM_HOME" || ! -r "$FM_HOME" || ! -x "$FM_HOME" || ! -d "$FM_HOME/bin" || ! -r "$FM_HOME/bin" || ! -x "$FM_HOME/bin" || ! -d "$FM_HOME/state" || ! -r "$FM_HOME/state" || ! -x "$FM_HOME/state" ]]; then
+    echo "helm: FM_HOME $FM_HOME must be a readable firstmate home containing bin/ and state/ before installing the service" >&2; return 1
+  fi
   if ! read -r bind port < <(endpoint); then
     echo "helm: refusing to install the service; the configuration is not usable" >&2; return 1
   fi
   mkdir -p "$unit_dir"
   for template in "$HELM_ROOT/systemd/helm.service" "$HELM_ROOT/systemd/helm-logrotate.service" "$HELM_ROOT/systemd/helm-logrotate.timer"; do
     temp="$(mktemp)"
-    sed -e "s|@HELM_ROOT@|$HELM_ROOT|g" -e "s|@HELM_STATE_DIR@|$HELM_STATE_DIR|g" -e "s|@FM_HOME@|${FM_HOME:-$HOME/firstmate}|g" \
+    sed -e "s|@HELM_ROOT@|$HELM_ROOT|g" -e "s|@HELM_STATE_DIR@|$HELM_STATE_DIR|g" -e "s|@FM_HOME@|$FM_HOME|g" \
       -e "s|@HELM_BIND@|$bind|g" -e "s|@HELM_PORT@|$port|g" "$template" > "$temp"
     install -m 0644 "$temp" "$unit_dir/$(basename "$template")"; rm -f "$temp"
   done

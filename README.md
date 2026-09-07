@@ -109,7 +109,7 @@ bin/helm stop
 bin/helm install-service
 ```
 
-`install-service` captures the current `FM_HOME` (or `~/firstmate` if it is unset) and the validated
+`install-service` requires a validated `FM_HOME` and captures it with the validated
 `HELM_BIND` and `HELM_PORT` into the generated unit, so rerun it after changing any of them. helm
 writes its pid and rotating logs under
 `${XDG_STATE_HOME:-~/.local/state}/helm`, never under `$FM_HOME`. `install-service` also installs an hourly

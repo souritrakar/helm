@@ -425,7 +425,7 @@ describe("herdrDoctor", () => {
     rmSync(binDir, { recursive: true, force: true });
   });
 
-  it("reports ok when herdr speaks the minimum protocol and the socket is present", async () => {
+  it("reports ok when herdr speaks the minimum protocol and the socket accepts a connection", async () => {
     const cfg = stubHerdr(JSON.stringify({ protocol: HERDR_MIN_PROTOCOL }));
     await listen(cfg);
 
@@ -435,6 +435,7 @@ describe("herdrDoctor", () => {
     expect(doctor.ok).toBe(true);
     expect(doctor.protocol).toBe(HERDR_MIN_PROTOCOL);
     expect(doctor.socketPresent).toBe(true);
+    expect(doctor.socketReachable).toBe(true);
   });
 
   it("reports a problem naming the protocol when herdr is older than the minimum", async () => {

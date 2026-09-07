@@ -546,6 +546,8 @@ export interface HerdrDoctorResult {
   readonly minProtocol: number;
   readonly socketPath: string;
   readonly socketPresent: boolean;
+  /** Whether helm could open and disconnect from the control socket. */
+  readonly socketReachable: boolean;
   /** One specific sentence per failed check. Empty when `ok`. */
   readonly problems: readonly string[];
 }
@@ -554,7 +556,9 @@ const schemaEnvelopeSchema = z.object({ protocol: z.number().int().positive() })
 
 /**
  * Assert that Herdr is present, speaks a protocol helm understands, and has a
- * control socket. Reports every problem it finds rather than the first.
+ * control socket. An existing socket pathname is not enough: it must accept a
+ * connection, or the Herdr server is not healthy. Reports every problem it
+ * finds rather than the first.
  */
 export async function herdrDoctor(cfg: HelmConfig): Promise<HerdrDoctorResult> {
   const problems: string[] = [];
@@ -582,10 +586,19 @@ export async function herdrDoctor(cfg: HelmConfig): Promise<HerdrDoctorResult> {
   }
 
   const socketPresent = isSocket(cfg.herdrSocketPath);
+  let socketReachable = false;
   if (!socketPresent) {
     problems.push(
       `no Herdr control socket at ${cfg.herdrSocketPath}; is the Herdr server running?`,
     );
+  } else {
+    const socketProblem = await probeSocket(cfg.herdrSocketPath);
+    socketReachable = socketProblem === null;
+    if (socketProblem !== null) {
+      problems.push(
+        `Herdr control socket at ${cfg.herdrSocketPath} did not accept a connection; is the Herdr server running? (${socketProblem})`,
+      );
+    }
   }
 
   return {
@@ -595,6 +608,7 @@ export async function herdrDoctor(cfg: HelmConfig): Promise<HerdrDoctorResult> {
     minProtocol: HERDR_MIN_PROTOCOL,
     socketPath: cfg.herdrSocketPath,
     socketPresent,
+    socketReachable,
     problems,
   };
 }
@@ -615,6 +629,24 @@ function isSocket(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Confirm that an existing Unix socket is backed by a live listener. */
+function probeSocket(path: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const socket = connect(path);
+    let settled = false;
+    const finish = (problem: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      resolve(problem);
+    };
+    const timeout = setTimeout(() => finish("connection timed out"), 1_000);
+    socket.once("connect", () => finish(null));
+    socket.once("error", (cause: NodeJS.ErrnoException) => finish(cause.code ?? cause.message));
+  });
 }
 
 /**
