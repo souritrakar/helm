@@ -52,11 +52,12 @@ These are not style preferences. Each one protects something that fails silently
   and the audit log write under `HELM_STATE_DIR` (default `~/.local/state/helm`), never `$FM_HOME`.
 - **Notifications are read-only.** Toast, unread badge, browser `Notification` (`tag` = item id),
   and `herdr notification show` announce blocking items; they never answer, route, or mutate.
-  Suppress the Herdr-native nudge only when an authorized session reports the tab is **visible and
-  focused** and the rendered card is on screen (`src/lib/inbox-visibility.ts`). Presence is
-  `GET`/`POST /api/inbox/visibility` with a per-session monotonic sequence. Lane G observes
-  existing `[data-inbox-item-id]` DOM cards; live store cards depend on Lane H rendering the
-  store into the shell.
+  Browser OS notifications fire only while the tab is hidden. Suppress the Herdr-native nudge
+  only when an authorized session reports the tab is **visible and focused** and the rendered
+  card is on screen (`src/lib/inbox-visibility.ts`); missing or failed presence does not suppress.
+  Presence is `GET`/`POST /api/inbox/visibility` with a per-session monotonic sequence. Lane G
+  observes existing `[data-inbox-item-id]` DOM cards; live store cards depend on Lane H rendering
+  the store into the shell.
 - **Responder routing (D-C, ratified 2026-09-06):** keyed status decisions → `resolve-key` (direct);
   captain-held (`channel: "captain-hold"`), freeform, and anything merge/credential/destructive →
   `relay` always. `routeChannel` forces that relay; it never selects the direct

@@ -11,6 +11,8 @@ interface VisibilitySession {
 
 /**
  * Ephemeral presence reported by an operator's active helm browser session.
+ * A card is visible only when some session is `active` (tab visible and focused)
+ * and lists that id; unknown or expired presence does not suppress.
  * This remains process-local: it neither changes inbox cards nor persists data.
  */
 export class InboxVisibility {

@@ -34,9 +34,9 @@ export function createInboxRuntime(config: HelmConfig): InboxRuntime {
   const registry = createAdapterRegistry();
   registerProductionAdapters(registry, config);
   const visibility = new InboxVisibility();
-  // An adapter can re-emit an unchanged open card. Keep this process-local set
-  // so a single occurrence gets one Herdr nudge, while browser-side `tag`
-  // dedupe protects across page reloads.
+  // One Herdr nudge per blocking occurrence. Retract and a non-blocking upsert
+  // clear the id so a later raise or escalation can announce again. Browser-side
+  // `tag` dedupe protects across page reloads.
   const herdrNotifiedIds = new Set<string>();
 
   store.subscribe((event) => {

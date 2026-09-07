@@ -22,9 +22,10 @@ endpoint, audit log, responder, and adapter registry. Lane D registers eight rea
 firstmate status decisions, captain holds, bearings, captain notes, steering backlog, and process
 events; plus Herdr agent-state and configured output-match events. The shell still renders fixture
 data: its options and freeform input keep local component state and do not yet call the response
-endpoint. Answered and dismissed cards render read-only. Notifications observe rendered DOM cards;
-live-card observation depends on Lane H rendering the store into the shell. The terminal bridge and
-service launcher are later lanes.
+endpoint. Answered and dismissed cards render read-only. Blocking items raise a toast and unread
+badge; optional desktop alerts fire only while the tab is hidden. Notifications observe rendered
+DOM cards; live-card observation depends on Lane H rendering the store into the shell. The terminal
+bridge and service launcher are later lanes.
 
 ## Requirements
 
@@ -86,7 +87,7 @@ Lane C and Lane G expose these local HTTP endpoints:
 | `GET /api/events` | Opens an SSE stream. A matching `Last-Event-ID` resumes buffered events; a missing, stale, or different-process id receives a complete snapshot. |
 | `POST /api/inbox/:id/respond` | Delivers exactly one declared option (`value`) or permitted freeform reply (`text`), then records the result. Requests must be JSON and pass the local operator gate. |
 | `GET /api/inbox/visibility` | Mints a helm-session token for presence reports. Local operator gate. |
-| `POST /api/inbox/visibility` | Reports whether the tab is active and which rendered card ids are on screen. Requires the session token (`X-Helm-Visibility-Session`) and a monotonic `sequence`. Presence only — never answers or mutates inbox items. |
+| `POST /api/inbox/visibility` | Reports whether the tab is visible and focused (`active`) and which rendered card ids are on screen. Requires the session token (`X-Helm-Visibility-Session`) and a monotonic `sequence`. Presence only — never answers or mutates inbox items. |
 
 Responses are routed conservatively: only typed, non-freeform status decisions use the keyed
 firstmate seam. Captain-held, merge, credential, destructive, irreversible, security-sensitive,

@@ -319,6 +319,33 @@ describe("inbox notification stream", () => {
     await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
   });
 
+  it("retries presence after a transient visibility failure", async () => {
+    cleanup();
+    FakeEventSource.current = null;
+    let failSession = true;
+    const fetchMock = vi.fn((_: unknown, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve({ ok: true, status: 200 });
+      if (failSession) return Promise.resolve({ ok: false, status: 503 });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: "session-retry" }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
+
+    await awaitStream();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+
+    failSession = false;
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/inbox/visibility",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-Helm-Visibility-Session": "session-retry" }),
+      }),
+    ));
+  });
+
   it("delivers only the current occurrence after a pending worker becomes active", async () => {
     let resolveReady: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
     Object.defineProperty(navigator, "serviceWorker", {
