@@ -56,6 +56,7 @@ beforeEach(async () => {
   setVisibility("visible");
   vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal("Notification", { permission: "granted", requestPermission: vi.fn() });
+  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ token: "session" }) })));
   Object.defineProperty(navigator, "serviceWorker", {
     configurable: true,
     value: { register: vi.fn(() => Promise.resolve({ showNotification })) },
@@ -106,5 +107,26 @@ describe("inbox notification stream", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(showNotification).not.toHaveBeenCalled();
     expect(screen.getAllByRole("status")[0]?.textContent).toBe("0");
+  });
+
+  it("re-checks tab visibility after service-worker registration", async () => {
+    let resolveRegistration: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { register: vi.fn(() => new Promise((resolve) => { resolveRegistration = resolve; })) },
+    });
+    cleanup();
+    render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
+    const stream = openStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:race"));
+      setVisibility("visible");
+      resolveRegistration?.({ showNotification });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(showNotification).not.toHaveBeenCalled();
   });
 });

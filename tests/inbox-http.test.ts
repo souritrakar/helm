@@ -11,6 +11,7 @@ import { createFileAuditWriter, createMemoryAuditWriter } from "@/lib/audit";
 import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
 import { handleInboxHttp } from "@/lib/inbox-http";
 import { createInboxStore, type InboxStore } from "@/lib/inbox-store";
+import { InboxVisibility } from "@/lib/inbox-visibility";
 import { auditLogPath } from "@/lib/paths";
 import { createResponder, type Responder } from "@/lib/responder";
 import { inboxItemId, type InboxItem } from "@/lib/types";
@@ -31,6 +32,7 @@ let store: InboxStore;
 let server: Server;
 let baseUrl: string;
 let responder: Responder;
+let visibility: InboxVisibility;
 
 function item(naturalKey: string): InboxItem {
   return {
@@ -83,12 +85,14 @@ beforeEach(async () => {
       }),
     },
   });
+  visibility = new InboxVisibility();
 
   await listen(async (req, res) => {
     const owned = await handleInboxHttp(req, res, {
       store,
       responder,
       allowedHosts: [`127.0.0.1:${addressPort(server)}`, `localhost:${addressPort(server)}`],
+      visibility,
     });
     if (!owned) {
       res.writeHead(404);
@@ -118,6 +122,33 @@ describe("GET /api/inbox", () => {
     const body = (await res.json()) as { items: InboxItem[] };
     expect(body.items).toHaveLength(1);
     expect(body.items[0]?.id).toBe(inboxItemId("fake", "k1"));
+  });
+});
+
+describe("inbox visibility signal", () => {
+  it("accepts presence only from a minted, operator-gated helm session", async () => {
+    const session = await fetch(`${baseUrl}/api/inbox/visibility`);
+    expect(session.status).toBe(200);
+    const { token } = await session.json() as { token: string };
+
+    const rejected = await fetch(`${baseUrl}/api/inbox/visibility`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: true, itemIds: ["fake:visible"] }),
+    });
+    expect(rejected.status).toBe(403);
+
+    const accepted = await fetch(`${baseUrl}/api/inbox/visibility`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Helm-Visibility-Session": token,
+      },
+      body: JSON.stringify({ active: true, itemIds: ["fake:visible"] }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(visibility.itemIsVisible("fake:visible")).toBe(true);
+    expect(store.listOpen()).toEqual([]);
   });
 });
 

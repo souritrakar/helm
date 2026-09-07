@@ -42,6 +42,7 @@ async function main(): Promise<void> {
           store: inbox.store,
           responder: inbox.responder,
           allowedHosts,
+          visibility: inbox.visibility,
         });
         if (!owned) {
           await handle(req, res);

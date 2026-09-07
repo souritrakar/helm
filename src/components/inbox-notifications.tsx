@@ -32,10 +32,11 @@ function browserPermission(): NotificationPermissionState {
 }
 
 function itemIsVisible(id: string): boolean {
-  const element = document.querySelector(`[data-inbox-item-id=${JSON.stringify(id)}]`);
-  if (!(element instanceof HTMLElement)) return false;
-  const rect = element.getBoundingClientRect();
-  return rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
+  return [...document.querySelectorAll<HTMLElement>("[data-inbox-item-id]")].some((element) => {
+    if (element.dataset.inboxItemId !== id) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
+  });
 }
 
 function parseInboxEventItem(raw: string): InboxEventItem | null {
@@ -80,6 +81,48 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const session = fetch("/api/inbox/visibility")
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const body: unknown = await response.json();
+        return typeof body === "object" && body !== null && typeof (body as { token?: unknown }).token === "string"
+          ? (body as { token: string }).token
+          : null;
+      })
+      .catch(() => null);
+    const report = () => {
+      void session.then((token) => {
+        if (cancelled || token === null) return;
+        const itemIds = [...document.querySelectorAll<HTMLElement>("[data-inbox-item-id]")]
+          .filter((element) => itemIsVisible(element.dataset.inboxItemId ?? ""))
+          .map((element) => element.dataset.inboxItemId ?? "");
+        void fetch("/api/inbox/visibility", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Helm-Visibility-Session": token },
+          body: JSON.stringify({ active: document.visibilityState === "visible" && document.hasFocus(), itemIds }),
+        });
+      });
+    };
+    report();
+    const timer = window.setInterval(report, 5_000);
+    window.addEventListener("focus", report);
+    window.addEventListener("blur", report);
+    window.addEventListener("scroll", report, true);
+    window.addEventListener("resize", report);
+    document.addEventListener("visibilitychange", report);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", report);
+      window.removeEventListener("blur", report);
+      window.removeEventListener("scroll", report, true);
+      window.removeEventListener("resize", report);
+      document.removeEventListener("visibilitychange", report);
+    };
+  }, []);
+
+  useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") setUnreadBlocking(0);
     };
@@ -108,17 +151,25 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
         !browserNotifiedIds.current.has(item.id)
       ) {
         browserNotifiedIds.current.add(item.id);
-        void serviceWorkerReady.current.then((registration) => registration?.showNotification(item.title, {
-          body: item.detail,
-          tag: item.id,
-          data: { inboxItemId: item.id },
-        }));
+        void serviceWorkerReady.current.then((registration) => {
+          if (document.visibilityState !== "visible") {
+            return registration?.showNotification(item.title, {
+              body: item.detail,
+              tag: item.id,
+              data: { inboxItemId: item.id },
+            });
+          }
+          return undefined;
+        });
       }
     });
     stream.addEventListener("item.retract", (raw) => {
       try {
         const { id } = JSON.parse((raw as MessageEvent<string>).data) as { id?: string };
-        if (id !== undefined) knownIds.current.delete(id);
+        if (id !== undefined) {
+          knownIds.current.delete(id);
+          browserNotifiedIds.current.delete(id);
+        }
       } catch {
         // Ignore a malformed internal event; the next snapshot restores state.
       }
