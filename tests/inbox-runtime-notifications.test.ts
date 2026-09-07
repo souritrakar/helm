@@ -49,6 +49,18 @@ afterEach(() => {
 });
 
 describe("native inbox notifications", () => {
+  it("announces a new blocking phase after demotion", () => {
+    stateDir = mkdtempSync(join(tmpdir(), "helm-runtime-"));
+    const runtime = createInboxRuntime({ ...CONFIG, helmStateDir: stateDir });
+
+    runtime.store.reconcile("fake", [item("first blocking phase")]);
+    runtime.store.reconcile("fake", [{ ...item("attention phase"), urgency: "attention" }]);
+    runtime.store.reconcile("fake", [item("second blocking phase")]);
+
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenLastCalledWith({ ...CONFIG, helmStateDir: stateDir }, "second blocking phase", "second blocking phase");
+  });
+
   it("suppresses a visible occurrence through updates until it is re-raised", () => {
     stateDir = mkdtempSync(join(tmpdir(), "helm-runtime-"));
     const runtime = createInboxRuntime({ ...CONFIG, helmStateDir: stateDir });

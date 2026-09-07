@@ -268,7 +268,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
             });
           }
           return undefined;
-        });
+        }).catch(() => undefined);
       }
     });
     stream.addEventListener("item.retract", (raw) => {

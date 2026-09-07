@@ -46,7 +46,11 @@ export function createInboxRuntime(config: HelmConfig): InboxRuntime {
     }
     if (event.type !== "item.upsert") return;
     const item = event.data as InboxItem;
-    if (item.urgency !== "blocking" || item.state !== "open") return;
+    if (item.state !== "open") return;
+    if (item.urgency !== "blocking") {
+      herdrNotifiedIds.delete(item.id);
+      return;
+    }
     if (herdrNotifiedIds.has(item.id)) return;
     herdrNotifiedIds.add(item.id);
     if (visibility.itemIsVisible(item.id)) return;

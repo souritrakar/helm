@@ -300,4 +300,17 @@ describe("inbox notification stream", () => {
     await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
     expect(showNotification).toHaveBeenCalledWith("Replacement action needed", expect.objectContaining({ tag: "status:reraised-pending" }));
   });
+
+  it("keeps a rejected browser notification best-effort", async () => {
+    showNotification.mockRejectedValueOnce(new Error("permission changed"));
+    const stream = openStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:notification-rejected"));
+    });
+
+    await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
+  });
 });
