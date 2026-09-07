@@ -23,36 +23,48 @@ function agentState(config: HelmConfig): InboxAdapter {
       let current: HerdrEventStream | undefined;
       let generation = 0;
       let scheduled = Promise.resolve();
+      let updates = Promise.resolve();
+
+      const queueUpdate = (update: () => void | Promise<void>): void => {
+        updates = updates.catch(() => undefined).then(update).catch((cause: unknown) => console.error("agent-state: event update failed", cause));
+      };
 
       const subscribe = async (reconcileAfterReady = false): Promise<void> => {
         if (stopped) return;
         const ownGeneration = generation + 1;
         const previous = current;
         if (previous === undefined) generation = ownGeneration;
+        let releaseEvents: (() => void) | undefined;
+        const eventBarrier = reconcileAfterReady
+          ? new Promise<void>((resolve) => { releaseEvents = resolve; })
+          : Promise.resolve();
         const stream = subscribeEvents(config, [
           { type: "pane.created" },
           { type: "pane.closed" },
           ...[...panes].map((paneId) => ({ type: "pane.agent_status_changed" as const, pane_id: paneId })),
         ], (event) => {
-          if (stopped || generation !== ownGeneration) return;
-          if (event.event === "pane.agent_status_changed") {
-            const { pane_id: paneId, agent_status: status, title, agent } = event.data;
-            if (status === "blocked") blocked.set(paneId, blockedItem(paneId, title ?? agent));
-            else blocked.delete(paneId);
-            ctx.emit([...blocked.values()]);
-          } else if (event.event === "pane_created") {
-            const pane = event.data.pane;
-            panes.add(pane.pane_id);
-            if (pane.agent_status === "blocked") blocked.set(pane.pane_id, blockedItem(pane.pane_id, pane.terminal_title ?? pane.agent));
-            else blocked.delete(pane.pane_id);
-            ctx.emit([...blocked.values()]);
-            queueSubscription();
-          } else if (event.event === "pane_closed") {
-            panes.delete(event.data.pane_id);
-            blocked.delete(event.data.pane_id);
-            ctx.emit([...blocked.values()]);
-            queueSubscription();
-          }
+          queueUpdate(async () => {
+            await eventBarrier;
+            if (stopped || generation !== ownGeneration) return;
+            if (event.event === "pane.agent_status_changed") {
+              const { pane_id: paneId, agent_status: status, title, agent } = event.data;
+              if (status === "blocked") blocked.set(paneId, blockedItem(paneId, title ?? agent));
+              else blocked.delete(paneId);
+              ctx.emit([...blocked.values()]);
+            } else if (event.event === "pane_created") {
+              const pane = event.data.pane;
+              panes.add(pane.pane_id);
+              if (pane.agent_status === "blocked") blocked.set(pane.pane_id, blockedItem(pane.pane_id, pane.terminal_title ?? pane.agent));
+              else blocked.delete(pane.pane_id);
+              ctx.emit([...blocked.values()]);
+              queueSubscription();
+            } else if (event.event === "pane_closed") {
+              panes.delete(event.data.pane_id);
+              blocked.delete(event.data.pane_id);
+              ctx.emit([...blocked.values()]);
+              queueSubscription();
+            }
+          });
         });
         current = stream;
         reportStreamFailure("agent-state", stream);
@@ -62,7 +74,10 @@ function agentState(config: HelmConfig): InboxAdapter {
           return;
         }
         generation = ownGeneration;
-        if (reconcileAfterReady) await reconcile();
+        if (reconcileAfterReady) {
+          try { await reconcile(); }
+          finally { releaseEvents?.(); }
+        }
         if (stopped || generation !== ownGeneration) stream.close();
         else previous?.close();
       };
@@ -79,7 +94,7 @@ function agentState(config: HelmConfig): InboxAdapter {
         scheduled = scheduled.catch(() => undefined).then(() => subscribe(true)).catch((cause: unknown) => console.error("agent-state: subscription failed", cause));
       }
 
-      await subscribe();
+      await subscribe(true);
       return { [Symbol.dispose]() { stopped = true; generation++; current?.close(); } };
     },
   };
