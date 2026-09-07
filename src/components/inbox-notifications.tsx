@@ -96,6 +96,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
     const report = () => {
       void session.then((token) => {
         if (cancelled || token === null) return;
+        // Live item ids are observed when Lane H renders store cards into this shell.
         const itemIds = [...document.querySelectorAll<HTMLElement>("[data-inbox-item-id]")]
           .filter((element) => itemIsVisible(element.dataset.inboxItemId ?? ""))
           .map((element) => element.dataset.inboxItemId ?? "");
@@ -186,7 +187,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
         browserPermission() === "granted"
       ) {
         void serviceWorkerReady.current.then((registration) => {
-          if (document.visibilityState !== "visible") {
+          if (document.visibilityState !== "visible" && blockingStates.current.get(item.id)?.announced) {
             return registration?.showNotification(item.title, {
               body: item.detail,
               tag: item.id,

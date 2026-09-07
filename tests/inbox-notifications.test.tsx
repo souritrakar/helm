@@ -180,4 +180,26 @@ describe("inbox notification stream", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(showNotification).not.toHaveBeenCalled();
   });
+
+  it("does not notify after a retraction while service-worker registration is pending", async () => {
+    let resolveRegistration: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { register: vi.fn(() => new Promise((resolve) => { resolveRegistration = resolve; })) },
+    });
+    cleanup();
+    render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
+    const stream = openStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:pending-retract"));
+      stream.emit("item.retract", { id: "status:pending-retract" });
+      resolveRegistration?.({ showNotification });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(showNotification).not.toHaveBeenCalled();
+  });
 });
