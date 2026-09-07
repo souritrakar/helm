@@ -176,9 +176,14 @@ const fixtureItems: readonly InboxItem[] = [
 ];
 
 const kindLabels: Record<InboxItemKind, string> = {
+  "status-decision": "Status decision",
   decision: "Decision",
   merge: "Merge",
   credential: "Credential",
+  "captain-held": "Captain-held",
+  destructive: "Destructive",
+  irreversible: "Irreversible",
+  "security-sensitive": "Security-sensitive",
   blocker: "Blocker",
   escalation: "Escalation",
   review: "Review",
