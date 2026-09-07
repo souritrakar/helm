@@ -410,9 +410,17 @@ describe("herdrDoctor", () => {
     };
   }
 
-  /** Bind a real unix socket where the config expects the control socket. */
-  async function listen(cfg: HelmConfig): Promise<void> {
-    server = createServer();
+  async function listen(cfg: HelmConfig, protocol = HERDR_MIN_PROTOCOL): Promise<void> {
+    server = createServer((connection) => {
+      connection.setEncoding("utf8");
+      connection.once("data", (chunk: string) => {
+        const request = JSON.parse(chunk.trim()) as { id: string };
+        connection.end(`${JSON.stringify({
+          id: request.id,
+          result: { type: "session_snapshot", snapshot: { protocol } },
+        })}\n`);
+      });
+    });
     await new Promise<void>((resolve) => server!.listen(cfg.herdrSocketPath, resolve));
   }
 
@@ -426,7 +434,7 @@ describe("herdrDoctor", () => {
     rmSync(binDir, { recursive: true, force: true });
   });
 
-  it("reports ok when herdr speaks the minimum protocol and the socket accepts a connection", async () => {
+  it("reports ok when the Herdr socket acknowledges a session snapshot", async () => {
     const cfg = stubHerdr(JSON.stringify({ protocol: HERDR_MIN_PROTOCOL }));
     await listen(cfg);
 
@@ -485,6 +493,22 @@ describe("herdrDoctor", () => {
     expect(doctor.socketReachable).toBe(false);
     expect(doctor.problems).toHaveLength(1);
     expect(doctor.problems[0]).toContain(cfg.herdrSocketPath);
+  });
+
+  it("rejects a non-Herdr listener at the configured socket", async () => {
+    const cfg = stubHerdr(JSON.stringify({ protocol: HERDR_MIN_PROTOCOL }));
+    server = createServer((connection) => {
+      connection.once("data", () => connection.end('{"result":{"type":"ok"}}\n'));
+    });
+    await new Promise<void>((resolve) => server!.listen(cfg.herdrSocketPath, resolve));
+
+    const doctor = await herdrDoctor(cfg);
+
+    expect(doctor.ok).toBe(false);
+    expect(doctor.socketReachable).toBe(false);
+    expect(doctor.problems).toContain(
+      `Herdr control socket at ${cfg.herdrSocketPath} did not complete a Herdr health check; is the Herdr server running? (session.snapshot did not return a Herdr session snapshot)`,
+    );
   });
 
   it("reports a problem when the control socket is absent", async () => {

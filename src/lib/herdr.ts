@@ -546,19 +546,24 @@ export interface HerdrDoctorResult {
   readonly minProtocol: number;
   readonly socketPath: string;
   readonly socketPresent: boolean;
-  /** Whether helm could open and disconnect from the control socket. */
+  /** Whether the control socket completed a compatible Herdr health request. */
   readonly socketReachable: boolean;
   /** One specific sentence per failed check. Empty when `ok`. */
   readonly problems: readonly string[];
 }
 
 const schemaEnvelopeSchema = z.object({ protocol: z.number().int().positive() });
+const socketSnapshotSchema = z.object({
+  id: z.string(),
+  result: z.object({
+    type: z.literal("session_snapshot"),
+    snapshot: z.object({ protocol: z.number().int().positive() }),
+  }),
+});
 
 /**
  * Assert that Herdr is present, speaks a protocol helm understands, and has a
- * control socket. An existing socket pathname is not enough: it must accept a
- * connection, or the Herdr server is not healthy. Reports every problem it
- * finds rather than the first.
+ * control socket. Reports every problem it finds rather than the first.
  */
 export async function herdrDoctor(cfg: HelmConfig): Promise<HerdrDoctorResult> {
   const problems: string[] = [];
@@ -592,11 +597,15 @@ export async function herdrDoctor(cfg: HelmConfig): Promise<HerdrDoctorResult> {
       `no Herdr control socket at ${cfg.herdrSocketPath}; is the Herdr server running?`,
     );
   } else {
-    const socketProblem = await probeSocket(cfg.herdrSocketPath);
-    socketReachable = socketProblem === null;
-    if (socketProblem !== null) {
+    const socketProbe = await probeSocket(cfg.herdrSocketPath);
+    socketReachable = typeof socketProbe !== "string" && socketProbe.protocol >= HERDR_MIN_PROTOCOL;
+    if (typeof socketProbe === "string") {
       problems.push(
-        `Herdr control socket at ${cfg.herdrSocketPath} did not accept a connection; is the Herdr server running? (${socketProblem})`,
+        `Herdr control socket at ${cfg.herdrSocketPath} did not complete a Herdr health check; is the Herdr server running? (${socketProbe})`,
+      );
+    } else if (!socketReachable) {
+      problems.push(
+        `Herdr control socket at ${cfg.herdrSocketPath} reported protocol ${socketProbe.protocol}, older than the ${HERDR_MIN_PROTOCOL} helm requires`,
       );
     }
   }
@@ -631,21 +640,40 @@ function isSocket(path: string): boolean {
   }
 }
 
-/** Confirm that an existing Unix socket is backed by a live listener. */
-function probeSocket(path: string): Promise<string | null> {
+function probeSocket(path: string): Promise<{ protocol: number } | string> {
   return new Promise((resolve) => {
     const socket = connect(path);
     let settled = false;
-    const finish = (problem: string | null) => {
+    const id = `helm:doctor:${process.pid}:${Date.now()}`;
+    const finish = (result: { protocol: number } | string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       socket.destroy();
-      resolve(problem);
+      resolve(result);
     };
-    const timeout = setTimeout(() => finish("connection timed out"), 1_000);
-    socket.once("connect", () => finish(null));
-    socket.once("error", (cause: NodeJS.ErrnoException) => finish(cause.code ?? cause.message));
+    const timeout = setTimeout(() => finish("health check timed out"), 1_000);
+    const lines = createInterface({ input: socket, crlfDelay: Infinity });
+    lines.on("error", (cause: Error) => finish(cause.message));
+    lines.once("line", (line) => {
+      const raw = safeParseJson(line);
+      const error = parseHerdrErrorResponse(raw);
+      if (error !== null) {
+        finish(`session.snapshot was refused: ${error}`);
+        return;
+      }
+      const response = socketSnapshotSchema.safeParse(raw);
+      if (!response.success || response.data.id !== id) {
+        finish("session.snapshot did not return a Herdr session snapshot");
+        return;
+      }
+      finish({ protocol: response.data.result.snapshot.protocol });
+    });
+    socket.once("connect", () => {
+      socket.write(`${JSON.stringify({ id, method: "session.snapshot", params: {} })}\n`);
+    });
+    socket.on("error", (cause: NodeJS.ErrnoException) => finish(cause.code ?? cause.message));
+    socket.once("close", () => finish("socket closed before health check completed"));
   });
 }
 
