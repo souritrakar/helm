@@ -40,7 +40,11 @@ function agentState(config: HelmConfig): InboxAdapter {
             else blocked.delete(paneId);
             ctx.emit([...blocked.values()]);
           } else if (event.event === "pane_created") {
-            panes.add(event.data.pane.pane_id);
+            const pane = event.data.pane;
+            panes.add(pane.pane_id);
+            if (pane.agent_status === "blocked") blocked.set(pane.pane_id, blockedItem(pane.pane_id, pane.terminal_title ?? pane.agent));
+            else blocked.delete(pane.pane_id);
+            ctx.emit([...blocked.values()]);
             queueSubscription();
           } else if (event.event === "pane_closed") {
             panes.delete(event.data.pane_id);
@@ -55,8 +59,17 @@ function agentState(config: HelmConfig): InboxAdapter {
         if (stopped || generation !== ownGeneration) stream.close();
         else previous?.close();
       };
+      const reconcile = async (): Promise<void> => {
+        const liveAgents = await agentList(config);
+        for (const agent of liveAgents) {
+          panes.add(agent.pane_id);
+          if (agent.agent_status === "blocked") blocked.set(agent.pane_id, blockedItem(agent.pane_id, agent.terminal_title ?? agent.agent));
+          else blocked.delete(agent.pane_id);
+        }
+        ctx.emit([...blocked.values()]);
+      };
       function queueSubscription(): void {
-        scheduled = scheduled.catch(() => undefined).then(subscribe).catch((cause: unknown) => console.error("agent-state: subscription failed", cause));
+        scheduled = scheduled.catch(() => undefined).then(reconcile).then(subscribe).catch((cause: unknown) => console.error("agent-state: subscription failed", cause));
       }
 
       await subscribe();
@@ -82,10 +95,10 @@ function outputMatch(config: HelmConfig): InboxAdapter {
       const matched = new Map<string, InboxItem>();
       const stream = subscribeEvents(config, patterns.map(subscriptionFor), (event) => {
         if (event.event !== "pane.output_matched") return;
-        const matching = patterns.filter((candidate) => candidate.paneId === event.data.pane_id && candidate.source === event.data.read.source && lineMatches(candidate, event.data.matched_line));
+        const matching = patterns.map((pattern, index) => ({ pattern, index })).filter(({ pattern }) => pattern.paneId === event.data.pane_id && pattern.source === event.data.read.source && lineMatches(pattern, event.data.matched_line));
         if (matching.length === 0) return;
-        for (const pattern of matching) {
-          const key = `${pattern.id}:${event.data.pane_id}:${event.data.read.revision}`;
+        for (const { pattern, index } of matching) {
+          const key = `${pattern.id}:${index}:${event.data.pane_id}:${event.data.read.revision}`;
           matched.set(key, item("output-match", key, {
             kind: "custom", urgency: pattern.urgency ?? "attention", title: pattern.title ?? `Output matched: ${pattern.id}`,
             detail: event.data.matched_line, options: [], allowFreeform: true,

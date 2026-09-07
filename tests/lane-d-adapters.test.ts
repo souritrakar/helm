@@ -106,7 +106,24 @@ describe("output-match adapter", () => {
     await start(createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!);
     await vi.waitUntil(() => emitted.at(-1)?.length === 2);
     expect(emitted.at(-1)?.map((entry) => entry.id)).toEqual([
-      "output-match:visible-a:w1:p2:4", "output-match:visible-b:w1:p2:4",
+      "output-match:visible-a:1:w1:p2:4", "output-match:visible-b:2:w1:p2:4",
+    ]);
+  });
+
+  it("retains matches from separate declarations with the same id", async () => {
+    server = createServer((socket) => { connection = socket; socket.once("data", () => {
+      socket.write('{"result":{"type":"subscription_started"}}\n');
+      socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
+    }); });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    config = { ...config, outputMatches: [
+      { id: "failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Failure" },
+      { id: "failure", paneId: "w1:p2", source: "visible", match: { type: "regex", value: "deploy" }, title: "Deploy" },
+    ] };
+    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!);
+    await vi.waitUntil(() => emitted.at(-1)?.length === 2);
+    expect(emitted.at(-1)?.map((entry) => entry.id)).toEqual([
+      "output-match:failure:0:w1:p2:4", "output-match:failure:1:w1:p2:4",
     ]);
   });
 });
@@ -122,7 +139,9 @@ describe("agent-state adapter", () => {
 
   it("resubscribes for an agent pane created after startup", async () => {
     const herdr = join(root, "herdr");
-    writeFileSync(herdr, "#!/bin/sh\nprintf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[]}}'\n");
+    const agentState = join(root, "agent-state");
+    writeFileSync(agentState, "empty");
+    writeFileSync(herdr, `#!/bin/sh\nif [ \"$(cat ${agentState})\" = blocked ]; then\n  printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p9\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-9\",\"agent_status\":\"blocked\",\"focused\":false}]}}'\nelse\n  printf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[]}}'\nfi\n`);
     chmodSync(herdr, 0o755);
     config = { ...config, herdrBin: herdr };
     server = createServer((socket) => {
@@ -131,6 +150,7 @@ describe("agent-state adapter", () => {
         requests.push(JSON.parse(raw.toString()));
         socket.write('{"result":{"type":"subscription_started"}}\n');
         if (requests.length === 1) {
+          writeFileSync(agentState, "blocked");
           socket.write('{"event":"pane_created","data":{"type":"pane_created","pane":{"pane_id":"w1:p9","terminal_id":"term-9","workspace_id":"w1","tab_id":"t1","focused":false,"agent_status":"working","revision":1}}}\n');
         }
       });
@@ -141,5 +161,6 @@ describe("agent-state adapter", () => {
     expect(requests[1]).toMatchObject({ method: "events.subscribe", params: { subscriptions: expect.arrayContaining([
       { type: "pane.agent_status_changed", pane_id: "w1:p9" },
     ]) } });
+    await vi.waitUntil(() => emitted.at(-1)?.some((entry) => entry.id === "agent-state:w1:p9"));
   });
 });
