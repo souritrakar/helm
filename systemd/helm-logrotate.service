@@ -3,5 +3,5 @@ Description=Rotate helm service logs
 
 [Service]
 Type=oneshot
-Environment=HELM_STATE_DIR=@HELM_STATE_DIR@
-ExecStart=@HELM_ROOT@/bin/helm rotate-logs
+Environment="HELM_STATE_DIR=@HELM_STATE_DIR@"
+ExecStart="@HELM_ROOT@/bin/helm" rotate-logs

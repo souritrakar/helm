@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import type { HelmConfig, HelmEndpoint } from "./config";
 import { runArgv } from "./exec";
 import { herdrDoctor, type HerdrDoctorResult } from "./herdr";
+import { belongsToProcessGroup, listenerPid } from "./listener";
 
 export interface LaunchDoctorResult {
   readonly ok: boolean;
@@ -11,7 +12,7 @@ export interface LaunchDoctorResult {
   readonly node: string;
   readonly pnpm: string | null;
   readonly linger: "yes" | "no" | "unknown";
-  /** The configured endpoint is in use, and the user in it is helm itself. */
+  /** The configured endpoint is in use, and the proven listener is helm itself. */
   readonly portHeldByHelm: boolean;
   readonly problems: readonly string[];
 }
@@ -43,6 +44,18 @@ export async function probePort(bind: string, port: number): Promise<PortProbe> 
     );
     server.listen(port, bind, () => server.close(() => resolve({ available: true })));
   });
+}
+
+/** Name who holds the endpoint, so a drifted port never reads as helm's own. */
+export function describeForeignListener(
+  endpoint: HelmEndpoint,
+  owner: number,
+  listener: number | null,
+): string {
+  const address = `${endpoint.bind}:${endpoint.port}`;
+  return listener === null
+    ? `${address} is already in use, and helm could not identify the listener; the running helm instance (pid ${String(owner)}) does not listen there`
+    : `${address} is already in use by pid ${String(listener)}, which is not the running helm instance (pid ${String(owner)})`;
 }
 
 /** Name the specific reason the endpoint is unusable, never just "in use". */
@@ -78,9 +91,17 @@ export async function launchDoctor(
   const pnpm = pnpmResult.exitCode === 0 ? pnpmResult.stdout.trim() : null;
   if (pnpm === null) problems.push("pnpm is missing or not runnable; helm requires pnpm 9 or newer");
   else if (!versionAtLeast(pnpm, 9)) problems.push(`pnpm ${pnpm} is too old; helm requires pnpm 9 or newer`);
-  const portHeldByHelm =
-    !portProbe.available && portProbe.code === "EADDRINUSE" && options.portOwnerPid !== undefined;
-  if (!portProbe.available && !portHeldByHelm) problems.push(describePortProblem(config, portProbe.code));
+  let portHeldByHelm = false;
+  if (!portProbe.available) {
+    const owner = options.portOwnerPid;
+    if (portProbe.code !== "EADDRINUSE" || owner === undefined) {
+      problems.push(describePortProblem(config, portProbe.code));
+    } else {
+      const listener = listenerPid(config.port);
+      portHeldByHelm = listener !== null && belongsToProcessGroup(listener, owner);
+      if (!portHeldByHelm) problems.push(describeForeignListener(config, owner, listener));
+    }
+  }
   const linger = lingerResult.exitCode === 0 ? normalizeLinger(lingerResult.stdout) : "unknown";
 
   return { ok: problems.length === 0, herdr, node, pnpm, linger, portHeldByHelm, problems };

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HelmConfig } from "@/lib/config";
@@ -20,7 +21,7 @@ describe("launch checks", () => {
     // 192.0.2.1 is TEST-NET-1: reserved for documentation, never a local address.
     await expect(probePort("192.0.2.1", 7333)).resolves.toEqual({ available: false, code: "EADDRNOTAVAIL" });
   });
-  it("blames the endpoint only when helm itself is not the listener", async () => {
+  it("accepts a busy endpoint only when the claimed instance is the real listener", async () => {
     server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const address = server.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
     const config: HelmConfig = {
@@ -28,15 +29,25 @@ describe("launch checks", () => {
       herdrSocketPath: "/fixture/herdr.sock", herdrBin: "herdr",
       bind: "127.0.0.1", port: address.port,
     };
-    const inUse = `127.0.0.1:${address.port} is already in use`;
+    // Alive, and holding nothing: a live pid alone must not vouch for the port.
+    const bystander = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000);"]);
+    try {
+      const unclaimed = await launchDoctor(config);
+      const claimed = await launchDoctor(config, { portOwnerPid: bystander.pid });
+      const ours = await launchDoctor(config, { portOwnerPid: process.pid });
 
-    const foreign = await launchDoctor(config);
-    const ours = await launchDoctor(config, { portOwnerPid: process.pid });
-
-    expect(foreign.problems).toContain(inUse);
-    expect(foreign.portHeldByHelm).toBe(false);
-    expect(ours.problems).not.toContain(inUse);
-    expect(ours.portHeldByHelm).toBe(true);
+      expect(unclaimed.portHeldByHelm).toBe(false);
+      expect(unclaimed.problems).toContain(`127.0.0.1:${address.port} is already in use`);
+      expect(claimed.portHeldByHelm).toBe(false);
+      expect(claimed.problems).toContain(
+        `127.0.0.1:${address.port} is already in use by pid ${process.pid}, which is not the running helm instance (pid ${bystander.pid})`,
+      );
+      expect(ours.portHeldByHelm).toBe(true);
+      expect(ours.problems.join(" ")).not.toContain("already in use");
+    } finally {
+      bystander.kill("SIGKILL");
+      await new Promise<void>((resolve) => bystander.once("exit", () => resolve()));
+    }
   });
   it("names the cause rather than always blaming another listener", () => {
     const endpoint = { bind: "192.0.2.1", port: 7333 };

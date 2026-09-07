@@ -71,9 +71,14 @@ wait_for_listen() {
   done
   return 1
 }
+# Wait on the same target the signal went to: the recorded leader exits before the
+# server it wrapped, so watching the leader alone would skip the escalation below.
 wait_for_exit() {
-  local remaining="$1"
-  while (( remaining-- > 0 )); do pid_is_live || { rm -f "$PID_FILE"; return 0; }; sleep 0.1; done
+  local target="$1" remaining="$2"
+  while (( remaining-- > 0 )); do
+    kill -0 -- "$target" 2>/dev/null || { rm -f "$PID_FILE"; return 0; }
+    sleep 0.1
+  done
   return 1
 }
 # A server that ignores SIGTERM keeps the port bound and the pidfile live, which
@@ -83,9 +88,9 @@ terminate_recorded() {
   pid="$(pid_from_file)" || return 0
   target="$(signal_target "$pid")"
   kill -TERM -- "$target" 2>/dev/null || true
-  wait_for_exit 30 && return 0
+  wait_for_exit "$target" 30 && return 0
   kill -KILL -- "$target" 2>/dev/null || true
-  wait_for_exit 30
+  wait_for_exit "$target" 30
 }
 start() {
   ensure_state_dir; remove_stale_pid
@@ -121,18 +126,25 @@ status() {
   echo "helm: service=$unit process=$process bind=$endpoint_text"
   [[ "$unit" == "active" || "$process" == running* ]]
 }
+# `&`, `|`, and `\` are sed replacement syntax, so a path holding one would be
+# written into the unit mangled or would abort the loop mid-install.
+sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 logs() { ensure_state_dir; [[ -f "$LOG_FILE" ]] && tail -n 200 "$LOG_FILE" || echo "helm: no service log at $LOG_FILE"; }
 install_service() {
   local unit_dir="$HOME/.config/systemd/user" template temp bind port fm_home linger_blocked=0
+  local root_pattern state_pattern fm_pattern
   # The config loader owns the FM_HOME and endpoint rules; a second copy here would
   # accept a unit that fails at every start, so ask the loader instead.
   if ! read -r bind port fm_home < <(service_config); then
     echo "helm: refusing to install the service; the configuration is not usable" >&2; return 1
   fi
+  root_pattern="$(sed_escape "$HELM_ROOT")"
+  state_pattern="$(sed_escape "$HELM_STATE_DIR")"
+  fm_pattern="$(sed_escape "$fm_home")"
   mkdir -p "$unit_dir"
   for template in "$HELM_ROOT/systemd/helm.service" "$HELM_ROOT/systemd/helm-logrotate.service" "$HELM_ROOT/systemd/helm-logrotate.timer"; do
     temp="$(mktemp)"
-    sed -e "s|@HELM_ROOT@|$HELM_ROOT|g" -e "s|@HELM_STATE_DIR@|$HELM_STATE_DIR|g" -e "s|@FM_HOME@|$fm_home|g" \
+    sed -e "s|@HELM_ROOT@|$root_pattern|g" -e "s|@HELM_STATE_DIR@|$state_pattern|g" -e "s|@FM_HOME@|$fm_pattern|g" \
       -e "s|@HELM_BIND@|$bind|g" -e "s|@HELM_PORT@|$port|g" "$template" > "$temp"
     install -m 0644 "$temp" "$unit_dir/$(basename "$template")"; rm -f "$temp"
   done
