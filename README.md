@@ -16,16 +16,16 @@ scripts and `herdr` commands — the same commands the operator would type. It w
 
 ## Status
 
-Lanes A (foundation and contracts), C (the inbox core), D (source adapters), F (the UI shell), and
-G (notifications) are built. Lane C provides the store, answered-history, SSE stream, response
-endpoint, audit log, responder, and adapter registry. Lane D registers eight read-only producers:
-firstmate status decisions, captain holds, bearings, captain notes, steering backlog, and process
-events; plus Herdr agent-state and configured output-match events. The shell still renders fixture
-data: its options and freeform input keep local component state and do not yet call the response
-endpoint. Answered and dismissed cards render read-only. Blocking items raise a toast and unread
-badge; optional desktop alerts fire only while the tab is hidden. Notifications observe rendered
-DOM cards; live-card observation depends on Lane H rendering the store into the shell. The terminal
-bridge and service launcher are later lanes.
+Lanes A (foundation and contracts), C (the inbox core), D (source adapters), E (service and launch
+tooling), F (the UI shell), and G (notifications) are built. Lane C provides the store,
+answered-history, SSE stream, response endpoint, audit log, responder, and adapter registry. Lane D
+registers eight read-only producers: firstmate status decisions, captain holds, bearings, captain
+notes, steering backlog, and process events; plus Herdr agent-state and configured output-match
+events. The shell still renders fixture data: its options and freeform input keep local component
+state and do not yet call the response endpoint. Answered and dismissed cards render read-only.
+Blocking items raise a toast and unread badge; optional desktop alerts fire only while the tab is
+hidden. Notifications observe rendered DOM cards; live-card observation depends on Lane H rendering
+the store into the shell. The terminal bridge is a later lane.
 
 ## Requirements
 
