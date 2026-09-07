@@ -17,9 +17,9 @@ scripts and `herdr` commands — the same commands the operator would type. It w
 ## Status
 
 Lane A (foundation and contracts) and Lane F (the UI shell) are built. The shell renders fixture
-data only. Cards, options, and freeform input keep local component state and deliver no answer.
-The terminal bridge, the inbox store, the adapters, the responder, and the service wrapper are
-later lanes.
+data only. Options and freeform input on an open card keep local component state and deliver no
+answer. Answered and dismissed cards render read-only. The terminal bridge, the inbox store, the
+adapters, the responder, and the service wrapper are later lanes.
 
 ## Requirements
 
