@@ -44,13 +44,20 @@ export class AdapterRegistry {
       throw new Error("AdapterRegistry: already started");
     }
     this.running = true;
-    for (const adapter of this.adapters.values()) {
-      const ctx: InboxAdapterContext = {
-        emit: (items) => store.reconcile(adapter.id, items),
-        retract: (ids) => store.retract(ids),
-      };
-      const disposable = await adapter.start(ctx);
-      this.disposers.set(adapter.id, disposable);
+    try {
+      for (const adapter of this.adapters.values()) {
+        const ctx: InboxAdapterContext = {
+          emit: (items) => store.reconcile(adapter.id, items),
+          retract: (ids) => store.retract(ids),
+        };
+        const disposable = await adapter.start(ctx);
+        this.disposers.set(adapter.id, disposable);
+      }
+    } catch (cause) {
+      // Dispose whatever already started so a flaky adapter cannot leave
+      // timers/watchers running after startup aborts.
+      this.stop();
+      throw cause;
     }
   }
 

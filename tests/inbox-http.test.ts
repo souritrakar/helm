@@ -141,6 +141,50 @@ describe("POST /api/inbox/:id/respond", () => {
     });
     expect(res.status).toBe(404);
   });
+
+  it("returns 400 for freeform text when allowFreeform is false", async () => {
+    store.reconcile("fake", [item("k1")]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const res = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "not an option" }),
+    });
+    expect(res.status).toBe(400);
+    expect(store.listOpen()).toHaveLength(1);
+  });
+
+  it("returns 400 for a value not in item.options", async () => {
+    store.reconcile("fake", [item("k1")]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const res = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "nope" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts empty value when text is present", async () => {
+    store.reconcile("fake", [
+      {
+        ...item("k1"),
+        allowFreeform: true,
+        options: [],
+        respond: { channel: "resolve-key", target: "helm-foundation", key: "k1" },
+      },
+    ]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const res = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "", text: "ship it" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; argv: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.argv.at(-1)).toBe("ship it");
+  });
 });
 
 describe("GET /api/events SSE", () => {
@@ -200,6 +244,26 @@ describe("GET /api/events SSE", () => {
     // Should not replay the pre-cursor upsert of `a` as a new snapshot.
     const upsertCount = buffer.split("event: item.upsert").length - 1;
     expect(upsertCount).toBe(1);
+    await reader.cancel();
+  });
+
+  it("falls back to a cold snapshot when Last-Event-ID is not resumable", async () => {
+    store.reconcile("fake", [item("a"), item("b")]);
+
+    const res = await fetch(`${baseUrl}/api/events`, {
+      headers: { "Last-Event-ID": "99999" },
+    });
+    const reader = res.body?.getReader();
+    if (reader === undefined) throw new Error("no body");
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!(buffer.includes("fake:a") && buffer.includes("fake:b"))) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+    }
+    expect(buffer).toContain("fake:a");
+    expect(buffer).toContain("fake:b");
     await reader.cancel();
   });
 });

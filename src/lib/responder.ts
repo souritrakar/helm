@@ -14,8 +14,10 @@
  * | Merge approval, credential, destructive/security-sens.  | relay always |
  * | Freeform reply / instruction                            | relay        |
  *
- * `captain-hold` remains an executable channel when a card declares it; D-C
- * still forces merge/credential through relay. Every attempt is audited.
+ * `routeChannel` forces `captain-hold`, merge, and credential through relay
+ * (captain decision `dc-captain-hold-direct-path`, 2026-09-07). The
+ * `captain-hold` executor remains for tests that call it directly; production
+ * routing never selects it. Every attempt is audited.
  */
 import type { HelmConfig } from "./config";
 import { auditEntryFromResult, type AuditWriter } from "./audit";
@@ -63,12 +65,13 @@ const ALWAYS_RELAY_KINDS: ReadonlySet<InboxItemKind> = new Set(["merge", "creden
 /**
  * Pick the channel for an item under D-C.
  *
- * Merge and credential always relay, even if a card declared something else.
- * Every other class honours the channel the adapter put on the card — adapters
- * are responsible for declaring resolve-key only for keyed status decisions.
+ * Merge, credential, and `captain-hold` always relay — even if a card declared
+ * a direct channel. Every other class honours the channel the adapter put on
+ * the card; adapters declare `resolve-key` only for keyed status decisions.
  */
 export function routeChannel(item: InboxItem): RespondChannel {
   if (ALWAYS_RELAY_KINDS.has(item.kind)) return "relay";
+  if (item.respond.channel === "captain-hold") return "relay";
   return item.respond.channel;
 }
 
@@ -81,8 +84,18 @@ export function createResponder(options: ResponderOptions): Responder {
 
   return {
     async respond(item: InboxItem, action: RespondAction): Promise<RespondResult> {
-      const answer = requireAnswer(action);
       const channel = routeChannel(item);
+      let answer: string;
+      try {
+        answer = requireAnswer(action);
+      } catch (cause) {
+        const refused = refusedResult(
+          channel === "none" ? "none" : channel,
+          cause instanceof Error ? cause.message : String(cause),
+        );
+        options.audit.append(auditEntryFromResult(item.id, action, refused));
+        return refused;
+      }
 
       if (channel === "none") {
         const refused = refusedResult("none", `item ${item.id} declares channel "none" and cannot be answered`);
@@ -90,8 +103,8 @@ export function createResponder(options: ResponderOptions): Responder {
         return refused;
       }
 
-      // Safety: never let a merge/credential slip through a non-relay path even
-      // if an executor override is installed for tests of other channels.
+      // routeChannel already forces captain-hold / merge / credential to relay;
+      // this belt check covers a kind override that somehow skipped that.
       if (ALWAYS_RELAY_KINDS.has(item.kind) && channel !== "relay") {
         const refused = refusedResult(
           channel,
@@ -108,6 +121,7 @@ export function createResponder(options: ResponderOptions): Responder {
             result = await executors.resolveKey(item, answer);
             break;
           case "captain-hold":
+            // Unreachable via routeChannel (forced to relay); kept for exhaustiveness.
             result = await executors.captainHold(item, answer);
             break;
           case "relay":
@@ -132,11 +146,14 @@ export function createResponder(options: ResponderOptions): Responder {
 }
 
 function requireAnswer(action: RespondAction): string {
-  const value = action.value ?? action.text;
-  if (value === undefined || value.trim() === "") {
+  const value =
+    action.value !== undefined && action.value.trim() !== "" ? action.value : undefined;
+  const text = action.text !== undefined && action.text.trim() !== "" ? action.text : undefined;
+  const answer = value ?? text;
+  if (answer === undefined) {
     throw new ResponderError("respond action needs a non-empty value or text");
   }
-  return value;
+  return answer;
 }
 
 /**

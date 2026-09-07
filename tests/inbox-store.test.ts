@@ -145,4 +145,10 @@ describe("event ids", () => {
     expect(replay.map((e) => e.type)).toEqual(["item.retract"]);
     expect(replay[0]?.data).toEqual({ id: inboxItemId(SOURCE, "a") });
   });
+
+  it("reports canResumeFrom false for an id above the buffer (restart case)", () => {
+    store.reconcile(SOURCE, [item("a")]);
+    expect(store.canResumeFrom(store.lastEventId())).toBe(true);
+    expect(store.canResumeFrom(store.lastEventId() + 100)).toBe(false);
+  });
 });

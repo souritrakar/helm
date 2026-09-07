@@ -50,8 +50,13 @@ These are not style preferences. Each one protects something that fails silently
   `inbox-runtime.ts`. Adapters emit a full open set; the store reconciles by id. Answered history
   and the audit log write under `HELM_STATE_DIR` (default `~/.local/state/helm`), never `$FM_HOME`.
 - **Responder routing (D-C, ratified 2026-09-06):** keyed status decisions → `resolve-key` (direct);
-  captain-held, freeform, and anything merge/credential/destructive → `relay` always. See
-  `src/lib/responder.ts` `routeChannel`.
+  captain-held (`channel: "captain-hold"`), freeform, and anything merge/credential/destructive →
+  `relay` always. `routeChannel` forces that relay; it never selects the direct
+  `fm-captain-hold.sh` path (captain decision `dc-captain-hold-direct-path`). See
+  `src/lib/responder.ts`.
+- **Respond API contract:** `POST /api/inbox/:id/respond` rejects freeform text when
+  `allowFreeform` is false, and rejects a `value` not in `item.options` (400). Enforcement is at
+  the API, not only in the UI (captain decision `freeform-not-enforced`).
 - **All Herdr access lives in `src/lib/herdr.ts`**, so a Herdr upgrade is a one-file change.
   `herdrDoctor` pins the minimum socket protocol.
 - Herdr names events asymmetrically: you **subscribe** with dots (`pane.created`) but events

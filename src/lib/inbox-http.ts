@@ -9,7 +9,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { InboxStore, InboxStoreEvent } from "./inbox-store";
 import type { Responder } from "./responder";
-import type { RespondAction } from "./types";
+import type { InboxItem, RespondAction } from "./types";
 
 export interface InboxHttpDeps {
   readonly store: InboxStore;
@@ -17,6 +17,9 @@ export interface InboxHttpDeps {
 }
 
 const RESPOND_PATH = /^\/api\/inbox\/([^/]+)\/respond\/?$/;
+
+/** Ids currently inside `responder.respond` — blocks double-dispatch races. */
+const respondInFlight = new Set<string>();
 
 /**
  * Try to handle an inbox HTTP request.
@@ -66,13 +69,14 @@ function handleSse(req: IncomingMessage, res: ServerResponse, store: InboxStore)
       ? Number(lastEventIdHeader)
       : null;
 
-  if (lastEventId !== null && !Number.isNaN(lastEventId)) {
+  if (lastEventId !== null && !Number.isNaN(lastEventId) && store.canResumeFrom(lastEventId)) {
     for (const event of store.eventsSince(lastEventId)) {
       writeSse(res, event);
     }
   } else {
-    // Cold connect: send the current open set. Snapshot events use id 0 so a
-    // client that reconnects with Last-Event-ID still gets live ids after.
+    // Cold connect, or Last-Event-ID outside the buffer (restart / eviction):
+    // send the current open set. Snapshot events omit id so live ids stay
+    // authoritative after reconnect.
     for (const event of store.snapshotEvents()) {
       writeSse(res, event, { omitId: true });
     }
@@ -118,7 +122,6 @@ async function handleRespond(
 
   const item = deps.store.get(id);
   if (item === undefined || item.state !== "open") {
-    // Also reject handled ids that are only in history.
     if (deps.store.isHandled(id)) {
       json(res, 409, { ok: false, error: `item ${id} was already answered or dismissed` });
       return;
@@ -127,21 +130,59 @@ async function handleRespond(
     return;
   }
 
-  // Prefer an adapter-owned respond hook when present (future Lane D); the
-  // shared Responder is the default path for every channel.
-  const result = await deps.responder.respond(item, action);
-  if (result.ok) {
-    deps.store.markAnswered(id);
+  const contractError = validateRespondContract(item, action);
+  if (contractError !== null) {
+    json(res, 400, { ok: false, error: contractError });
+    return;
   }
-  json(res, result.ok ? 200 : 502, result);
+
+  if (respondInFlight.has(id)) {
+    json(res, 409, { ok: false, error: `item ${id} already has a response in flight` });
+    return;
+  }
+  respondInFlight.add(id);
+  try {
+    // The shared Responder is the only respond path today. InboxAdapter.respond
+    // exists on the type for Lane D but is not wired here yet.
+    const result = await deps.responder.respond(item, action);
+    if (result.ok) {
+      deps.store.markAnswered(id);
+    }
+    json(res, result.ok ? 200 : 502, result);
+  } finally {
+    respondInFlight.delete(id);
+  }
 }
 
+/**
+ * Enforce the card's answer contract at the API (captain decision
+ * `freeform-not-enforced`, option a).
+ */
+export function validateRespondContract(item: InboxItem, action: RespondAction): string | null {
+  if (action.text !== undefined && !item.allowFreeform) {
+    return `item ${item.id} does not allow freeform text; choose one of the declared options`;
+  }
+  if (action.value !== undefined && item.options.length > 0) {
+    const allowed = item.options.some((option) => option.value === action.value);
+    if (!allowed) {
+      return `value ${JSON.stringify(action.value)} is not among the options for item ${item.id}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse a respond body. Empty or whitespace-only fields are dropped so a body
+ * like `{ "value": "", "text": "ship it" }` yields `{ text: "ship it" }`.
+ */
 function parseRespondAction(body: unknown): RespondAction | null {
   if (typeof body !== "object" || body === null) return null;
   const record = body as Record<string, unknown>;
-  const value = typeof record.value === "string" ? record.value : undefined;
-  const text = typeof record.text === "string" ? record.text : undefined;
-  if ((value === undefined || value.trim() === "") && (text === undefined || text.trim() === "")) {
+  const value =
+    typeof record.value === "string" && record.value.trim() !== "" ? record.value : undefined;
+  const text =
+    typeof record.text === "string" && record.text.trim() !== "" ? record.text : undefined;
+  if (value === undefined && text === undefined) {
     return null;
   }
   return {

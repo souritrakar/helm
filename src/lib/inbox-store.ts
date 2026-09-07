@@ -175,6 +175,32 @@ export class InboxStore {
     return this.eventBuffer.filter((event) => event.id > lastEventId);
   }
 
+  /**
+   * Lowest event id still in the resume buffer, or `null` when the buffer is
+   * empty. Used by SSE to decide whether `Last-Event-ID` can be replayed.
+   */
+  lowestRetainedEventId(): number | null {
+    const first = this.eventBuffer[0];
+    return first === undefined ? null : first.id;
+  }
+
+  /**
+   * Whether `lastEventId` sits in the resumable window `[floor - 1, last]`.
+   *
+   * Outside that window (server restart, buffer eviction, or a future id) the
+   * caller must fall back to {@link snapshotEvents} instead of an empty replay.
+   */
+  canResumeFrom(lastEventId: number): boolean {
+    if (Number.isNaN(lastEventId)) return false;
+    const floor = this.lowestRetainedEventId();
+    const last = this.lastEventId();
+    if (floor === null) {
+      // Empty buffer: only "caught up with nothing emitted" is resumable.
+      return lastEventId === last;
+    }
+    return lastEventId >= floor - 1 && lastEventId <= last;
+  }
+
   /** Upsert events for every currently open item (cold SSE connect). */
   snapshotEvents(): InboxStoreEvent[] {
     const at = this.now();

@@ -101,6 +101,16 @@ describe("loadConfig", () => {
       () => ({ FM_HOME: home, HELM_STATE_DIR: "helm-state" }),
       /HELM_STATE_DIR must be an absolute path/,
     ],
+    [
+      "HELM_STATE_DIR equal to FM_HOME",
+      () => ({ FM_HOME: home, HELM_STATE_DIR: home }),
+      /must not be equal to or under FM_HOME/,
+    ],
+    [
+      "HELM_STATE_DIR under FM_HOME",
+      () => ({ FM_HOME: home, HELM_STATE_DIR: join(home, "state", "helm") }),
+      /must not be equal to or under FM_HOME/,
+    ],
   ])("rejects %s", (_label, buildEnv, expected) => {
     const env = buildEnv();
 

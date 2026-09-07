@@ -8,7 +8,7 @@
  */
 import { accessSync, constants, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 /** Thrown when the environment cannot produce a usable configuration. */
 export class ConfigError extends Error {
@@ -61,7 +61,7 @@ export function loadConfig(env: ConfigEnv = process.env): HelmConfig {
     fmHome,
     fmBinDir,
     fmStateDir,
-    helmStateDir: resolveHelmStateDir(env),
+    helmStateDir: resolveHelmStateDir(env, fmHome),
     herdrSocketPath: resolveHerdrSocketPath(env),
     herdrBin: nonEmpty("HERDR_BIN", env.HERDR_BIN) ?? DEFAULT_HERDR_BIN,
     port: parsePort("HELM_PORT", env.HELM_PORT),
@@ -74,15 +74,28 @@ export function loadConfig(env: ConfigEnv = process.env): HelmConfig {
  *
  * The directory need not exist yet — the store and audit log create it on first
  * write. An explicit relative path is rejected so a mis-set variable cannot
- * silently write under the process cwd.
+ * silently write under the process cwd. A path equal to or under `fmHome` is
+ * also rejected so answered-history and the audit log can never write under
+ * `$FM_HOME` (AGENTS.md hard rule 1).
  */
-function resolveHelmStateDir(env: ConfigEnv): string {
+function resolveHelmStateDir(env: ConfigEnv, fmHome: string): string {
   const explicit = nonEmpty("HELM_STATE_DIR", env.HELM_STATE_DIR);
   const value = explicit ?? join(stateHome(env), "helm");
   if (!isAbsolute(value)) {
     throw new ConfigError(`HELM_STATE_DIR must be an absolute path, got ${JSON.stringify(value)}`);
   }
+  if (isPathInsideOrEqual(value, fmHome)) {
+    throw new ConfigError(
+      `HELM_STATE_DIR ${JSON.stringify(value)} must not be equal to or under FM_HOME ${JSON.stringify(fmHome)}; helm must never write under $FM_HOME`,
+    );
+  }
   return value;
+}
+
+/** True when `path` is `parent` or a descendant of `parent`. */
+function isPathInsideOrEqual(path: string, parent: string): boolean {
+  const rel = relative(parent, path);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /**

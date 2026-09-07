@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createFakeAdapter } from "@/lib/adapters/fake";
 import { createAdapterRegistry } from "@/lib/adapters/registry";
 import { createInboxStore } from "@/lib/inbox-store";
-import { inboxItemId, type InboxItem } from "@/lib/types";
+import { inboxItemId, type InboxAdapter, type InboxItem } from "@/lib/types";
 
 let stateDir: string;
 
@@ -65,5 +65,22 @@ describe("AdapterRegistry + fake adapter", () => {
     const { adapter } = createFakeAdapter({ id: "fake" });
     registry.register(adapter);
     expect(() => registry.register(createFakeAdapter({ id: "fake" }).adapter)).toThrow(/already registered/);
+  });
+
+  it("disposes already-started adapters when a later start fails", async () => {
+    const store = createInboxStore(stateDir);
+    const registry = createAdapterRegistry();
+    const first = createFakeAdapter({ id: "first" });
+    const failing: InboxAdapter = {
+      id: "failing",
+      async start(): Promise<Disposable> {
+        throw new Error("boom");
+      },
+    };
+    registry.register(first.adapter);
+    registry.register(failing);
+
+    await expect(registry.start(store)).rejects.toThrow(/boom/);
+    expect(first.controls.started).toBe(false);
   });
 });

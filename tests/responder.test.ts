@@ -59,11 +59,21 @@ describe("routeChannel (D-C)", () => {
     ).toBe("relay");
   });
 
+  it("forces captain-hold through relay (D-C / dc-captain-hold-direct-path)", () => {
+    expect(
+      routeChannel(
+        baseItem({
+          respond: { channel: "captain-hold", target: "helm-foundation" },
+        }),
+      ),
+    ).toBe("relay");
+  });
+
   it("honours the card channel for keyed status decisions", () => {
     expect(routeChannel(baseItem())).toBe("resolve-key");
   });
 
-  it("honours relay for captain-held and freeform cards", () => {
+  it("honours relay for freeform cards", () => {
     expect(
       routeChannel(
         baseItem({
@@ -143,6 +153,48 @@ describe("createResponder", () => {
     expect(result.ok).toBe(true);
     expect(relayed).toEqual([`${inboxItemId("status-decisions", "api-shape")}:approve`]);
     expect(audit.entries[0]?.channel).toBe("relay");
+  });
+
+  it("relays captain-hold cards instead of calling fm-captain-hold.sh", async () => {
+    const audit = createMemoryAuditWriter();
+    const responder = createResponder({
+      config: CONFIG,
+      audit,
+      exec: {
+        captainHold: async () => {
+          throw new Error("captain-hold must not run for D-C routed cards");
+        },
+        relay: async (item, answer) =>
+          ok("relay", ["herdr", "pane", "run", item.respond.target ?? "", answer]),
+      },
+    });
+
+    const result = await responder.respond(
+      baseItem({
+        respond: { channel: "captain-hold", target: "w1:p1" },
+      }),
+      { value: "release" },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(audit.entries[0]?.channel).toBe("relay");
+  });
+
+  it("audits an empty-value body that still has text, using the text", async () => {
+    const audit = createMemoryAuditWriter();
+    const responder = createResponder({
+      config: CONFIG,
+      audit,
+      exec: {
+        resolveKey: async (_item, answer) =>
+          ok("resolve-key", ["fm-send.sh", "helm-foundation", "--resolve-key", "api-shape", answer]),
+      },
+    });
+
+    const result = await responder.respond(baseItem(), { value: "", text: "ship it" });
+    expect(result.ok).toBe(true);
+    expect(result.argv.at(-1)).toBe("ship it");
+    expect(audit.entries).toHaveLength(1);
   });
 
   it("relays freeform / captain-held answers into the pane", async () => {
