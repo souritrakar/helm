@@ -47,9 +47,9 @@ export function createInboxRuntime(config: HelmConfig): InboxRuntime {
     if (event.type !== "item.upsert") return;
     const item = event.data as InboxItem;
     if (item.urgency !== "blocking" || item.state !== "open") return;
-    if (visibility.itemIsVisible(item.id)) return;
     if (herdrNotifiedIds.has(item.id)) return;
     herdrNotifiedIds.add(item.id);
+    if (visibility.itemIsVisible(item.id)) return;
     // A desktop-notification failure must never disrupt the read-only inbox
     // stream. `showHerdrNotification` is argv-only and resolves with its result.
     void showHerdrNotification(config, item.title, item.detail ?? item.title);
