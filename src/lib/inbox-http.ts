@@ -164,8 +164,8 @@ async function handleRespond(
   }
   respondInFlight.add(id);
   try {
-    // The shared Responder is the only respond path today. InboxAdapter.respond
-    // exists on the type for Lane D but is not wired here yet.
+    // The shared Responder is the only response path today; InboxAdapter.respond
+    // remains reserved for a future adapter-owned response contract.
     const result = await deps.responder.respond(item, action);
     if (result.ok) {
       try {

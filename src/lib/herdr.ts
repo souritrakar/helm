@@ -312,6 +312,12 @@ export type HerdrSubscription =
       readonly pane_id: string;
       readonly agent_status?: HerdrAgentStatus | null;
     }
+  | {
+      readonly type: "pane.output_matched";
+      readonly pane_id: string;
+      readonly source: "visible" | "recent" | "recent_unwrapped" | "detection";
+      readonly match: { readonly type: "substring" | "regex"; readonly value: string };
+    }
   | { readonly type: "pane.created" }
   | { readonly type: "pane.closed" };
 
@@ -324,6 +330,16 @@ export const paneAgentStatusChangedSchema = z.object({
   title: z.string().nullish(),
 });
 export type PaneAgentStatusChanged = z.infer<typeof paneAgentStatusChangedSchema>;
+
+const paneReadResultSchema = z.object({
+  pane_id: z.string(), workspace_id: z.string(), tab_id: z.string(),
+  source: z.enum(["visible", "recent", "recent_unwrapped", "detection"]), format: z.string(), text: z.string(),
+  revision: z.number().int().nonnegative(), truncated: z.boolean(),
+});
+export const paneOutputMatchedSchema = z.object({
+  pane_id: z.string(), matched_line: z.string(), read: paneReadResultSchema,
+});
+export type PaneOutputMatched = z.infer<typeof paneOutputMatchedSchema>;
 
 export const paneCreatedSchema = z.object({
   type: z.literal("pane_created"),
@@ -339,6 +355,7 @@ export const paneClosedSchema = z.object({
 /** A delivered event, discriminated by its wire `event` name. */
 export const herdrEventSchema = z.discriminatedUnion("event", [
   z.object({ event: z.literal("pane.agent_status_changed"), data: paneAgentStatusChangedSchema }),
+  z.object({ event: z.literal("pane.output_matched"), data: paneOutputMatchedSchema }),
   z.object({ event: z.literal("pane_created"), data: paneCreatedSchema }),
   z.object({ event: z.literal("pane_closed"), data: paneClosedSchema }),
 ]);

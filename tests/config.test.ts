@@ -26,6 +26,11 @@ afterAll(() => {
 });
 
 describe("loadConfig", () => {
+  it("accepts declared Herdr output patterns and validates their protocol source", () => {
+    const config = loadConfig({ FM_HOME: home, HELM_OUTPUT_MATCHES: '[{"id":"ready","paneId":"w1:p1","source":"visible","match":{"type":"substring","value":"ready"}}]' });
+    expect(config.outputMatches).toEqual([{ id: "ready", paneId: "w1:p1", source: "visible", match: { type: "substring", value: "ready" } }]);
+    expect(() => loadConfig({ FM_HOME: home, HELM_OUTPUT_MATCHES: '[{"id":"bad","paneId":"w1:p1","source":"screen","match":{"type":"substring","value":"ready"}}]' })).toThrow(/HELM_OUTPUT_MATCHES/);
+  });
   it("derives the firstmate seam directories from FM_HOME", () => {
     const config = loadConfig({ FM_HOME: home });
 

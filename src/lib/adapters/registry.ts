@@ -2,8 +2,8 @@
  * Pluggable adapter registry (SPEC §D4).
  *
  * Adding a source is one file plus one {@link registerAdapter} call. The store,
- * transport, and UI do not change. Lane C registers only the fake adapter used
- * in tests; the eight production adapters land in Lane D.
+ * transport, and UI do not change. Production registration belongs in the
+ * runtime composition root; tests can register the fake adapter directly.
  */
 import type { InboxAdapter, InboxAdapterContext } from "../types";
 import type { InboxStore } from "../inbox-store";
@@ -75,7 +75,7 @@ export class AdapterRegistry {
   }
 }
 
-/** Empty registry ready for Lane D adapters (and the test fake). */
+/** Build an empty registry for runtime composition or focused tests. */
 export function createAdapterRegistry(): AdapterRegistry {
   return new AdapterRegistry();
 }
