@@ -20,8 +20,8 @@ export interface InboxRuntime {
 /**
  * Build the inbox runtime. Adapters are not started until {@link InboxRuntime.start}.
  *
- * Lane C leaves the registry empty in production; tests and Lane D register
- * adapters before `start()`.
+ * Production source adapters are registered before `start()`; tests may build
+ * a separate registry with only the adapters they need.
  */
 export function createInboxRuntime(config: HelmConfig): InboxRuntime {
   const store = createInboxStore(config.helmStateDir);

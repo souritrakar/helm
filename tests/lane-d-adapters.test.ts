@@ -58,6 +58,29 @@ describe("state record adapters", () => {
     expect(emitted.at(-1)?.[0]).toMatchObject({ source: "steering-backlog", respond: { channel: "none" }, detail: "steer this" });
   });
 
+  it("turns the firstmate decision fold into a keyed status-decision card", async () => {
+    const library = join(config.fmBinDir, "fm-classify-lib.sh");
+    writeFileSync(library, "scan_open_decisions() { printf 'task-7\\tapprove\\tblocked\\tNeeds a human decision\\n'; }\n");
+    await start(stateAdapter("status-decisions"));
+    expect(emitted.at(-1)).toMatchObject([{
+      id: "status-decisions:task-7:approve", kind: "status-decision", urgency: "blocking", taskId: "task-7",
+      title: "Blocked: task-7", detail: "Needs a human decision",
+      respond: { channel: "resolve-key", target: "task-7", key: "approve" },
+    }]);
+  });
+
+  it("turns captain-actionable fleet backlog records into relay cards", async () => {
+    const script = join(config.fmBinDir, "fm-fleet-snapshot.sh");
+    writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' '{\"schema\":\"fm-fleet-snapshot.v1\",\"generated\":\"2026-09-07T00:00:00Z\",\"fm_home\":\"fixture\",\"roots\":{\"fm_root\":\"/fixture\",\"state\":\"/fixture/state\",\"data\":\"/fixture/data\",\"config\":\"/fixture/config\",\"projects\":\"/fixture/projects\"},\"backlog\":{\"path\":\"/fixture/backlog\",\"present\":true,\"records\":[{\"order\":1,\"state\":\"held\",\"raw\":\"inert\",\"structured\":true,\"id\":\"held-1\",\"title\":\"Approve release\",\"repo\":null,\"kind\":null,\"hold_kind\":null,\"hold_reason\":\"Awaiting captain\",\"hold_until\":null,\"blocked_by_ids\":[],\"unresolved_blocker_ids\":[],\"current_role\":null,\"captain_actionable\":true,\"deferred_marker\":false,\"pr_url\":null}]},\"tasks\":[],\"main_inventory\":{\"valid\":true,\"reason\":null,\"orphan_in_flight\":[],\"unstructured_current_count\":0}}'\n");
+    chmodSync(script, 0o755);
+    config = { ...config, captainPane: "w1:captain" };
+    await start(stateAdapter("captain-holds"));
+    expect(emitted.at(-1)).toMatchObject([{
+      id: "captain-holds:held-1", kind: "captain-held", urgency: "blocking", taskId: "held-1",
+      title: "Approve release", detail: "Awaiting captain", respond: { channel: "relay", target: "w1:captain" },
+    }]);
+  });
+
   it("classifies an unhandled process result but never invokes handled or mutating commands", async () => {
     const inbox = join(config.fmStateDir, "procevent-inbox"); mkdirSync(inbox);
     const result = join(inbox, "when-deploy.1.result"); writeFileSync(result, "status: fired\noutput:\n<unsafe>");

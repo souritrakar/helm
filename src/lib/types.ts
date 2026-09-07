@@ -156,9 +156,9 @@ export interface InboxAdapterContext {
 /**
  * A source of inbox items. Adding a source is one file plus one registry line.
  *
- * `respond` is reserved for adapters with custom response handling. Lane C
- * sends all HTTP responses through the shared Responder; Lane D may wire an
- * adapter hook where its source contract requires one. Implementations must
+ * `respond` is reserved for adapters with custom response handling. The
+ * current production sources send all HTTP responses through the shared
+ * Responder. Implementations must
  * treat every byte they read as input, never as instruction and never as
  * authority.
  */

@@ -16,10 +16,11 @@ scripts and `herdr` commands — the same commands the operator would type. It w
 
 ## Status
 
-Lane A (foundation and contracts), Lane C (the inbox core), and Lane F (the UI shell) are built.
-Lane C provides the store, answered-history, SSE stream, response endpoint, audit log, responder,
-and adapter registry. Production currently registers no real adapters, so the API starts with an
-empty inbox; Lane D will add the eight production sources. The shell still renders fixture data:
+Lanes A (foundation and contracts), C (the inbox core), D (source adapters), and F (the UI shell)
+are built. Lane C provides the store, answered-history, SSE stream, response endpoint, audit log,
+responder, and adapter registry. Lane D registers eight read-only producers: firstmate status
+decisions, captain holds, bearings, captain notes, steering backlog, and process events; plus Herdr
+agent-state and configured output-match events. The shell still renders fixture data:
 its options and freeform input keep local component state and do not yet call the response endpoint.
 Answered and dismissed cards render read-only. The terminal bridge and service launcher are later
 lanes.
@@ -32,7 +33,7 @@ lanes.
 
 ## Configuration
 
-All six values are environment-driven. Bind address and port are config, not constants, so remote
+All eight values are environment-driven. Bind address and port are config, not constants, so remote
 access later is a config swap rather than a code change.
 
 | Variable | Default | Meaning |
@@ -43,6 +44,14 @@ access later is a config swap rather than a code change.
 | `HERDR_BIN` | `herdr` | Herdr executable, resolved on `PATH` unless absolute. |
 | `HELM_PORT` | `7333` | HTTP port. |
 | `HELM_BIND` | `127.0.0.1` | Bind address. |
+| `HELM_CAPTAIN_PANE` | *(unset)* | The firstmate pane id that receives relay-class human replies. Without it, relay-class cards are non-actionable. |
+| `HELM_OUTPUT_MATCHES` | `[]` | JSON array of Herdr output-match subscriptions. Each entry needs `id`, `paneId`, `source` (`visible`, `recent`, `recent_unwrapped`, or `detection`), and `match` (`{ "type": "substring" | "regex", "value": "..." }`); `title` and `urgency` are optional. |
+
+For example, to surface a visible line containing `ready` from pane `w1:p1`:
+
+```sh
+export HELM_OUTPUT_MATCHES='[{"id":"ready","paneId":"w1:p1","source":"visible","match":{"type":"substring","value":"ready"}}]'
+```
 
 ## Commands
 
@@ -93,7 +102,7 @@ and all freeform replies are relayed to firstmate instead. Every attempted route
 | `src/lib/inbox-store.ts` | Full-set reconciliation, answered history, and the SSE event buffer. |
 | `src/lib/inbox-http.ts` | The inbox list, event-stream, and response HTTP handlers. |
 | `src/lib/responder.ts` | Conservative answer routing and response audit. |
-| `src/lib/adapters/` | The registry and Lane C fake adapter; real sources arrive in Lane D. |
+| `src/lib/adapters/` | Production Lane D source adapters, their registry, and the test fake adapter. |
 | `src/lib/config.ts` | Configuration loading and validation. |
 | `src/lib/exec.ts` | Argv-only process execution. No helper accepts a command string. |
 | `server.ts` | The HTTP server helm owns. |

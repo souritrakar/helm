@@ -1,8 +1,8 @@
 /**
  * Controllable fake adapter for tests.
  *
- * Lane C ships the registry plus this stand-in. The eight real adapters are
- * Lane D and must not be added here.
+ * Production adapters are registered separately; this stand-in is only for
+ * focused tests.
  */
 import type { InboxAdapter, InboxAdapterContext, InboxItem, RespondAction, RespondResult } from "../types";
 
