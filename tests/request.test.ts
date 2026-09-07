@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_VIEWPORT, requestedViewport } from "@/lib/request";
+import { DEFAULT_VIEWPORT, parseTerminalInput, requestedViewport } from "@/lib/request";
 
 describe("requestedViewport", () => {
   it("takes the geometry the viewer connected with", () => {
@@ -19,5 +19,24 @@ describe("requestedViewport", () => {
     expect(requestedViewport("/api/term?cols=1&rows=48")).toEqual(DEFAULT_VIEWPORT);
     expect(requestedViewport("/api/term?cols=120&rows=9000")).toEqual(DEFAULT_VIEWPORT);
     expect(requestedViewport("/api/term?cols=abc&rows=48")).toEqual(DEFAULT_VIEWPORT);
+  });
+});
+
+describe("parseTerminalInput", () => {
+  it("accepts a single-line converse message", () => {
+    expect(parseTerminalInput({ paneId: "w1:p1", text: "hello" })).toEqual({ paneId: "w1:p1", text: "hello" });
+  });
+
+  it("accepts a named converse key", () => {
+    expect(parseTerminalInput({ paneId: "w1:p1", key: "escape" })).toEqual({ paneId: "w1:p1", key: "escape" });
+  });
+
+  it("rejects converse text that would submit more than one pane line", () => {
+    expect(() => parseTerminalInput({ paneId: "w1:p1", text: "first command\nsecond command" })).toThrow(
+      /single line without tab, newline, or control characters/,
+    );
+    expect(() => parseTerminalInput({ paneId: "w1:p1", text: "one\ttwo" })).toThrow(/single line/);
+    expect(() => parseTerminalInput({ paneId: "w1:p1", text: "bell\u0007" })).toThrow(/single line/);
+    expect(() => parseTerminalInput({ paneId: "w1:p1", text: "del\u007f" })).toThrow(/single line/);
   });
 });

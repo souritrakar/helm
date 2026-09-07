@@ -28,16 +28,9 @@ import { createInboxRuntime } from "./src/lib/inbox-runtime";
 import { allowedHostsForBind, requireOperator } from "./src/lib/require-operator";
 import { paneRun, paneSendKeys, type TerminalViewport } from "./src/lib/herdr";
 import { PaneDirectory, type PaneDiscovery } from "./src/lib/panes";
-import { requestedViewport } from "./src/lib/request";
+import { parseTerminalInput, requestedViewport, TERMINAL_KEYS } from "./src/lib/request";
 import { TerminalBridge } from "./src/lib/terminal-bridge";
 
-/**
- * The bounded one-shot keys Converse mode may send.
- *
- * helm is a channel, not a keyboard: there is no raw keystream and no takeover.
- * Each name maps to the Herdr key spelling (`esc` is Herdr's canonical Escape).
- */
-const TERMINAL_KEYS = ["enter", "escape", "c-c"] as const;
 const HERDR_KEY_NAMES: Record<(typeof TERMINAL_KEYS)[number], string> = { enter: "enter", escape: "esc", "c-c": "C-c" };
 const paneIdSchema = z.string().min(1);
 
@@ -46,10 +39,6 @@ const paneIdSchema = z.string().min(1);
  * named key (`herdr pane send-keys`). Both together is ambiguous — the text
  * would silently never be sent — so it is rejected rather than half-honoured.
  */
-const inputSchema = z.union([
-  z.object({ paneId: paneIdSchema, text: z.string().min(1).max(100_000) }).strict(),
-  z.object({ paneId: paneIdSchema, key: z.enum(TERMINAL_KEYS) }).strict(),
-]);
 const INPUT_CONTRACT = `Terminal input must be {paneId, text} for one-shot text, or {paneId, key} where key is one of ${TERMINAL_KEYS.join(", ")}`;
 
 const colsSchema = z.number().int();
@@ -241,7 +230,7 @@ async function handleInput(req: IncomingMessage, res: ServerResponse, config: Re
   if (!gate.allow) { respondJson(res, 403, { error: "Terminal input is refused" }); return; }
   try {
     const body = await readJsonBody(req);
-    const input = inputSchema.parse(body);
+    const input = parseTerminalInput(body);
     if (!knownPaneIds().has(input.paneId)) { respondJson(res, 404, { error: "Unknown pane" }); return; }
     const result = "key" in input
       ? await paneSendKeys(config, input.paneId, [HERDR_KEY_NAMES[input.key]])
