@@ -102,14 +102,14 @@ start() {
   doctor; rotate_logs
   if [[ "${HELM_FOREGROUND:-0}" == "1" ]]; then
     exec >> "$LOG_FILE" 2>&1
-    setsid bash -c 'cd "$1" && exec pnpm start' helm "$HELM_ROOT" &
+    setsid pnpm --dir "$HELM_ROOT" start &
     write_pid "$!"
     wait "$!"
     return $?
   fi
   local bind port
   if ! read -r bind port < <(endpoint); then echo "helm: refusing to start; the configuration is not usable" >&2; return 1; fi
-  setsid bash -c 'cd "$1" && exec pnpm start' helm "$HELM_ROOT" >> "$LOG_FILE" 2>&1 &
+  setsid pnpm --dir "$HELM_ROOT" start >> "$LOG_FILE" 2>&1 &
   write_pid "$!"
   if wait_for_listen "$bind" "$port" "$(pid_from_file)"; then echo "helm: started (pid $(pid_from_file)) on $bind:$port"; return 0; fi
   terminate_recorded || true
@@ -137,7 +137,7 @@ status() {
 # and `|` are sed syntax, and a bare `%` is a systemd specifier systemd expands.
 unit_value() {
   local label="$1" value="$2"
-  if [[ "$value" =~ [[:cntrl:]] || "$value" == *'"'* || "$value" == *"'"* || "$value" == *\\* ]]; then
+  if [[ "$value" =~ [[:cntrl:]] || "$value" == *'"'* || "$value" == *"'"* || "$value" == *\\* || "$value" == *'$'* ]]; then
     echo "helm: refusing to install the service; $label contains systemd unit syntax requiring escaping" >&2
     return 1
   fi

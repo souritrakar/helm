@@ -33,7 +33,7 @@ describe("helm launcher", () => {
     const commands = join(directory, "bin");
     const state = join(directory, "state");
     mkdirSync(commands); mkdirSync(state);
-    writeCommand(commands, "pnpm", 'if [[ "${!#}" == "start" ]]; then exec sleep 30; fi');
+    writeCommand(commands, "pnpm", `if [[ "$1" == "--dir" && "$2" == "${root}" && "$3" == "start" ]]; then exec sleep 30; fi`);
     const child = spawn(join(root, "bin/helm"), ["start"], {
       env: { ...process.env, PATH: `${commands}:${process.env.PATH}`, HELM_FOREGROUND: "1", HELM_STATE_DIR: state },
     });
@@ -62,6 +62,27 @@ describe("helm launcher", () => {
         PATH: `${commands}:${process.env.PATH}`,
         HOME: home,
         HELM_STATE_DIR: `${directory}/state"unsafe`,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("HELM_STATE_DIR contains systemd unit syntax requiring escaping");
+    expect(existsSync(join(home, ".config/systemd/user"))).toBe(false);
+  });
+
+  it("rejects dollar-bearing unit values before writing a unit", () => {
+    const directory = workspace();
+    const commands = join(directory, "bin");
+    const home = join(directory, "home");
+    mkdirSync(commands); mkdirSync(home);
+    writeCommand(commands, "pnpm", 'printf "127.0.0.1 7333 /fixture/firstmate\\n"');
+    const result = spawnSync(join(root, "bin/helm"), ["install-service"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${commands}:${process.env.PATH}`,
+        HOME: home,
+        HELM_STATE_DIR: `${directory}/state$unsafe`,
       },
     });
 
