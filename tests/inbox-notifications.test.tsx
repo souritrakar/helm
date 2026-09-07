@@ -123,6 +123,28 @@ describe("inbox notification stream", () => {
     expect(showNotification).toHaveBeenCalledWith("Captain action needed", expect.objectContaining({ tag: "status:escalation" }));
   });
 
+  it("announces a re-raised card after a cold snapshot omits its earlier occurrence", async () => {
+    const stream = openStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:reraised"));
+    });
+    await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("status").textContent).toBe("1");
+
+    act(() => {
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:reraised"));
+    });
+
+    await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(2));
+    expect(showNotification).toHaveBeenLastCalledWith("Captain action needed", expect.objectContaining({ tag: "status:reraised" }));
+    expect(screen.getByRole("status").textContent).toBe("1");
+  });
+
   it("re-checks tab visibility after service-worker registration", async () => {
     let resolveRegistration: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
     Object.defineProperty(navigator, "serviceWorker", {

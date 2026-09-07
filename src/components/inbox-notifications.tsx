@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { toast } from "sonner";
 
 type NotificationPermissionState = NotificationPermission | "unsupported";
+type BlockingNotificationState = { readonly announced: boolean; readonly suppressed: boolean };
 
 interface NotificationContextValue {
   readonly unreadBlocking: number;
@@ -71,7 +72,8 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
   const [unreadBlocking, setUnreadBlocking] = useState(0);
   const [permission, setPermission] = useState<NotificationPermissionState>(browserPermission);
   const serviceWorkerReady = useRef<Promise<ServiceWorkerRegistration | null>>(Promise.resolve(null));
-  const blockingStates = useRef(new Map<string, { readonly announced: boolean; readonly suppressed: boolean }>());
+  const blockingStates = useRef(new Map<string, BlockingNotificationState>());
+  const snapshotStates = useRef<Map<string, BlockingNotificationState> | null>(null);
   const snapshotting = useRef(false);
 
   useEffect(() => {
@@ -131,8 +133,18 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
 
   useEffect(() => {
     const stream = new EventSource("/api/events");
-    stream.addEventListener("snapshot.begin", () => { snapshotting.current = true; });
-    stream.addEventListener("snapshot.end", () => { snapshotting.current = false; });
+    stream.addEventListener("snapshot.begin", () => {
+      snapshotting.current = true;
+      snapshotStates.current = new Map();
+      setUnreadBlocking(0);
+    });
+    stream.addEventListener("snapshot.end", () => {
+      if (!snapshotting.current) return;
+      blockingStates.current = snapshotStates.current ?? new Map();
+      snapshotStates.current = null;
+      snapshotting.current = false;
+      setUnreadBlocking(0);
+    });
     stream.addEventListener("item.upsert", (raw) => {
       const item = parseInboxEventItem((raw as MessageEvent<string>).data);
       if (item === null) return;
@@ -145,13 +157,16 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
           suppressed: false,
         };
 
-      if (item.urgency !== "blocking") {
-        blockingStates.current.set(item.id, nextState);
+      if (snapshotting.current) {
+        snapshotStates.current?.set(item.id, {
+          announced: false,
+          suppressed: item.urgency === "blocking",
+        });
         return;
       }
 
-      if (snapshotting.current) {
-        blockingStates.current.set(item.id, { announced: false, suppressed: true });
+      if (item.urgency !== "blocking") {
+        blockingStates.current.set(item.id, nextState);
         return;
       }
 
