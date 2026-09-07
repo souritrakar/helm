@@ -110,7 +110,6 @@ async function main(): Promise<void> {
     console.error(`helm pane discovery: ${error}`);
     broadcastNotice(`Pane discovery is degraded: ${error}`);
   });
-  await directory.start();
 
   const server = createServer((req, res) => {
     void (async () => {
@@ -195,6 +194,7 @@ async function main(): Promise<void> {
     server.listen(config.port, config.bind, resolve);
   });
   console.log(`helm listening on http://${config.bind}:${config.port} (FM_HOME=${config.fmHome})`);
+  void directory.start();
 
   let shuttingDown = false;
   const shutdown = (): void => {
