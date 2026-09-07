@@ -193,7 +193,10 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
       }
 
       if (item.urgency !== "blocking") {
-        blockingStates.current.set(item.id, nextState);
+        if (nextState.announced) {
+          setUnreadBlocking((count) => Math.max(0, count - 1));
+        }
+        blockingStates.current.set(item.id, { announced: false, suppressed: false });
         return;
       }
 
