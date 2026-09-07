@@ -84,13 +84,23 @@ beforeEach(async () => {
   });
 
   await listen(async (req, res) => {
-    const owned = await handleInboxHttp(req, res, { store, responder });
+    const owned = await handleInboxHttp(req, res, {
+      store,
+      responder,
+      allowedHosts: [`127.0.0.1:${addressPort(server)}`, `localhost:${addressPort(server)}`],
+    });
     if (!owned) {
       res.writeHead(404);
       res.end("not inbox");
     }
   });
 });
+
+function addressPort(s: Server): number {
+  const address = s.address();
+  if (address === null || typeof address === "string") throw new Error("no address");
+  return address.port;
+}
 
 afterEach(async () => {
   await new Promise<void>((resolve, reject) => {
@@ -238,6 +248,23 @@ describe("POST /api/inbox/:id/respond", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("returns 400 when both value and text are present", async () => {
+    store.reconcile("fake", [
+      {
+        ...item("k1"),
+        allowFreeform: true,
+      },
+    ]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const res = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "yes", text: "and a note" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
 });
 
 describe("GET /api/events SSE", () => {
@@ -285,11 +312,16 @@ describe("GET /api/events SSE", () => {
 
   it("resumes from Last-Event-ID", async () => {
     store.reconcile("fake", [item("a")]);
-    const lastId = store.lastEventId();
+    const lastWire = store.wireId({
+      id: store.lastEventId(),
+      type: "item.upsert",
+      data: item("a"),
+      at: "2026-09-06T00:00:00.000Z",
+    });
     store.reconcile("fake", [item("a"), item("b")]);
 
     const res = await fetch(`${baseUrl}/api/events`, {
-      headers: { "Last-Event-ID": String(lastId) },
+      headers: { "Last-Event-ID": lastWire },
     });
     const reader = res.body?.getReader();
     if (reader === undefined) throw new Error("no body");
@@ -300,7 +332,7 @@ describe("GET /api/events SSE", () => {
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
     }
-    expect(buffer).toContain(`id: ${lastId + 1}`);
+    expect(buffer).toContain(`id: ${store.streamEpoch}-`);
     expect(buffer).toContain("fake:b");
     // Should not replay the pre-cursor upsert of `a` as a new snapshot.
     const upsertCount = buffer.split("event: item.upsert").length - 1;
@@ -308,11 +340,11 @@ describe("GET /api/events SSE", () => {
     await reader.cancel();
   });
 
-  it("falls back to a bounded snapshot when Last-Event-ID is not resumable", async () => {
+  it("falls back to a bounded snapshot when Last-Event-ID epoch mismatches", async () => {
     store.reconcile("fake", [item("a"), item("b")]);
 
     const res = await fetch(`${baseUrl}/api/events`, {
-      headers: { "Last-Event-ID": "99999" },
+      headers: { "Last-Event-ID": "deadbeef-7" },
     });
     const reader = res.body?.getReader();
     if (reader === undefined) throw new Error("no body");

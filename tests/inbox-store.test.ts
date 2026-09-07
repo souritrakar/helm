@@ -146,9 +146,16 @@ describe("event ids", () => {
     expect(replay[0]?.data).toEqual({ id: inboxItemId(SOURCE, "a") });
   });
 
-  it("reports canResumeFrom false for an id above the buffer (restart case)", () => {
+  it("reports canResumeFrom false for an id above the buffer", () => {
     store.reconcile(SOURCE, [item("a")]);
     expect(store.canResumeFrom(store.lastEventId())).toBe(true);
     expect(store.canResumeFrom(store.lastEventId() + 100)).toBe(false);
+  });
+
+  it("reports canResumeFrom false for a mismatched stream epoch (restart)", () => {
+    store.reconcile(SOURCE, [item("a")]);
+    const seq = store.lastEventId();
+    expect(store.canResumeFrom(`${store.streamEpoch}-${seq}`)).toBe(true);
+    expect(store.canResumeFrom(`other-epoch-${seq}`)).toBe(false);
   });
 });

@@ -7,7 +7,12 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { InboxStore, InboxStoreEvent } from "./inbox-store";
+import {
+  HistoryPersistError,
+  type InboxStore,
+  type InboxStoreEvent,
+  parseWireEventId,
+} from "./inbox-store";
 import { requireOperator } from "./require-operator";
 import type { Responder } from "./responder";
 import type { InboxItem, RespondAction } from "./types";
@@ -15,6 +20,8 @@ import type { InboxItem, RespondAction } from "./types";
 export interface InboxHttpDeps {
   readonly store: InboxStore;
   readonly responder: Responder;
+  /** Host allowlist for requireOperator (bind + loopback). */
+  readonly allowedHosts: readonly string[];
 }
 
 const RESPOND_PATH = /^\/api\/inbox\/([^/]+)\/respond\/?$/;
@@ -73,18 +80,22 @@ function handleSse(req: IncomingMessage, res: ServerResponse, store: InboxStore)
   const lastEventIdHeader = req.headers["last-event-id"];
   const lastEventId =
     typeof lastEventIdHeader === "string" && lastEventIdHeader.trim() !== ""
-      ? Number(lastEventIdHeader)
+      ? lastEventIdHeader.trim()
       : null;
 
-  if (lastEventId !== null && !Number.isNaN(lastEventId) && store.canResumeFrom(lastEventId)) {
+  if (
+    lastEventId !== null &&
+    parseWireEventId(lastEventId) !== null &&
+    store.canResumeFrom(lastEventId)
+  ) {
     for (const event of store.eventsSince(lastEventId)) {
-      writeSse(res, event);
+      writeSse(res, store, event);
     }
   } else {
-    // Cold connect or non-resumable Last-Event-ID: full snapshot with begin/end
-    // so the client drops phantom cards closed while offline.
+    // Cold connect, missing/mismatched epoch, or non-resumable cursor: full
+    // snapshot with begin/end so the client drops phantom cards.
     for (const event of store.captureSnapshot()) {
-      writeSse(res, event);
+      writeSse(res, store, event);
     }
   }
 
@@ -94,7 +105,7 @@ function handleSse(req: IncomingMessage, res: ServerResponse, store: InboxStore)
   }, 15_000);
 
   const unsubscribe = store.subscribe((event) => {
-    writeSse(res, event);
+    writeSse(res, store, event);
   });
 
   const cleanup = (): void => {
@@ -111,7 +122,7 @@ async function handleRespond(
   deps: InboxHttpDeps,
   id: string,
 ): Promise<void> {
-  const gate = requireOperator(req, { mutate: true });
+  const gate = requireOperator(req, { mutate: true, allowedHosts: deps.allowedHosts });
   if (!gate.allow) {
     json(res, 403, { ok: false, error: gate.reason });
     return;
@@ -157,7 +168,20 @@ async function handleRespond(
     // exists on the type for Lane D but is not wired here yet.
     const result = await deps.responder.respond(item, action);
     if (result.ok) {
-      deps.store.markAnswered(id);
+      try {
+        deps.store.markAnswered(id);
+      } catch (cause) {
+        if (cause instanceof HistoryPersistError) {
+          json(res, 500, {
+            ok: false,
+            delivered: true,
+            error: cause.message,
+            result,
+          });
+          return;
+        }
+        throw cause;
+      }
     }
     json(res, result.ok ? 200 : 502, result);
   } finally {
@@ -167,9 +191,12 @@ async function handleRespond(
 
 /**
  * Enforce the card's answer contract at the API (captain decisions
- * `freeform-not-enforced` and `empty-options-value-bypass`).
+ * `freeform-not-enforced`, `empty-options-value-bypass`, `both-value-and-text-drops-text`).
  */
 export function validateRespondContract(item: InboxItem, action: RespondAction): string | null {
+  if (action.value !== undefined && action.text !== undefined) {
+    return "send either value or text, not both";
+  }
   if (action.text !== undefined && !item.allowFreeform) {
     return `item ${item.id} does not allow freeform text; choose one of the declared options`;
   }
@@ -214,11 +241,11 @@ function sseHeaders(): Record<string, string> {
   };
 }
 
-function writeSse(res: ServerResponse, event: InboxStoreEvent): void {
+function writeSse(res: ServerResponse, store: InboxStore, event: InboxStoreEvent): void {
   if (res.writableEnded) return;
   const lines: string[] = [];
   if (event.id > 0) {
-    lines.push(`id: ${event.id}`);
+    lines.push(`id: ${store.wireId(event)}`);
   }
   lines.push(`event: ${event.type}`);
   lines.push(`data: ${JSON.stringify(event.data)}`);

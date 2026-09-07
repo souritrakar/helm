@@ -8,6 +8,7 @@
  * file under helm's own state dir so a restart does not resurrect handled cards
  * (AC 11) and never writes under `$FM_HOME` (AC 18).
  */
+import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -32,7 +33,10 @@ export interface SnapshotEndData {
 }
 
 export interface InboxStoreEvent {
-  /** Monotonic event id, serialized as the SSE `id:` field. */
+  /**
+   * Monotonic sequence within this process stream.
+   * The SSE `id:` field is {@link formatWireEventId} (`<epoch>-<seq>`).
+   */
   readonly id: number;
   readonly type: InboxStoreEventType;
   /**
@@ -41,6 +45,31 @@ export interface InboxStoreEvent {
    */
   readonly data: InboxItem | { readonly id: string } | SnapshotBeginData | SnapshotEndData;
   readonly at: string;
+}
+
+/** Parsed `Last-Event-ID` / SSE wire id. */
+export interface WireEventId {
+  readonly epoch: string;
+  readonly seq: number;
+}
+
+/** Format the SSE `id:` field: `<epoch>-<seq>`. */
+export function formatWireEventId(epoch: string, seq: number): string {
+  return `${epoch}-${seq}`;
+}
+
+/**
+ * Parse a wire event id. Returns null when the shape is not `<epoch>-<seq>`
+ * with a non-negative integer seq.
+ */
+export function parseWireEventId(raw: string): WireEventId | null {
+  const trimmed = raw.trim();
+  const dash = trimmed.lastIndexOf("-");
+  if (dash <= 0 || dash === trimmed.length - 1) return null;
+  const epoch = trimmed.slice(0, dash);
+  const seqRaw = trimmed.slice(dash + 1);
+  if (epoch === "" || !/^\d+$/.test(seqRaw)) return null;
+  return { epoch, seq: Number(seqRaw) };
 }
 
 export type InboxStoreListener = (event: InboxStoreEvent) => void;
@@ -63,6 +92,11 @@ export interface InboxStoreOptions {
   readonly eventBufferSize?: number;
   /** Clock override for tests. */
   readonly now?: () => string;
+  /**
+   * Per-process stream epoch embedded in SSE ids. A new process always gets a
+   * fresh epoch so a stale Last-Event-ID from before restart cannot resume.
+   */
+  readonly streamEpoch?: string;
 }
 
 const DEFAULT_EVENT_BUFFER = 1000;
@@ -76,12 +110,20 @@ export class InboxStore {
   private readonly listeners = new Set<InboxStoreListener>();
   private readonly eventBuffer: InboxStoreEvent[] = [];
   private nextEventId = 1;
+  /** Per-process epoch for SSE wire ids (`<epoch>-<seq>`). */
+  readonly streamEpoch: string;
 
   constructor(options: InboxStoreOptions) {
     this.historyFile = options.historyFile;
     this.eventBufferSize = options.eventBufferSize ?? DEFAULT_EVENT_BUFFER;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.streamEpoch = options.streamEpoch ?? randomBytes(8).toString("hex");
     this.loadHistory();
+  }
+
+  /** SSE `id:` value for an event from this store. */
+  wireId(event: InboxStoreEvent): string {
+    return formatWireEventId(this.streamEpoch, event.id);
   }
 
   /** Open items currently in the store, in insertion order. */
@@ -181,20 +223,20 @@ export class InboxStore {
   }
 
   /**
-   * Events with id greater than `lastEventId`, for SSE `Last-Event-ID` resume.
-   * When `lastEventId` is null/undefined, returns an empty list — callers that
-   * need a cold snapshot should call {@link captureSnapshot}.
+   * Events with seq greater than the cursor, for SSE `Last-Event-ID` resume.
+   * Accepts a wire id (`<epoch>-<seq>`) or a bare numeric seq (tests).
+   * When the cursor is null/undefined/unparseable, returns an empty list —
+   * callers that need a cold snapshot should call {@link captureSnapshot}.
    */
-  eventsSince(lastEventId: number | null | undefined): InboxStoreEvent[] {
-    if (lastEventId === null || lastEventId === undefined || Number.isNaN(lastEventId)) {
-      return [];
-    }
-    return this.eventBuffer.filter((event) => event.id > lastEventId);
+  eventsSince(lastEventId: string | number | null | undefined): InboxStoreEvent[] {
+    const cursor = this.resolveResumeCursor(lastEventId);
+    if (cursor === null) return [];
+    return this.eventBuffer.filter((event) => event.id > cursor.seq);
   }
 
   /**
-   * Lowest event id still in the resume buffer, or `null` when the buffer is
-   * empty. Used by SSE to decide whether `Last-Event-ID` can be replayed.
+   * Lowest event seq still in the resume buffer, or `null` when the buffer is
+   * empty.
    */
   lowestRetainedEventId(): number | null {
     const first = this.eventBuffer[0];
@@ -202,20 +244,36 @@ export class InboxStore {
   }
 
   /**
-   * Whether `lastEventId` sits in the resumable window `[floor - 1, last]`.
+   * Whether `Last-Event-ID` can be replayed from this process stream.
    *
-   * Outside that window (server restart, buffer eviction, or a future id) the
-   * caller must fall back to {@link captureSnapshot} instead of an empty replay.
+   * Requires a matching stream epoch and a seq in `[floor - 1, last]`. A bare
+   * numeric id (no epoch) or a mismatched epoch is not resumable — that is the
+   * restart case (captain decision `sse-resume-aliases-across-restart`).
    */
-  canResumeFrom(lastEventId: number): boolean {
-    if (Number.isNaN(lastEventId)) return false;
+  canResumeFrom(lastEventId: string | number): boolean {
+    const cursor = this.resolveResumeCursor(lastEventId);
+    if (cursor === null) return false;
     const floor = this.lowestRetainedEventId();
     const last = this.lastEventId();
     if (floor === null) {
-      // Empty buffer: only "caught up with nothing emitted" is resumable.
-      return lastEventId === last;
+      return cursor.seq === last;
     }
-    return lastEventId >= floor - 1 && lastEventId <= last;
+    return cursor.seq >= floor - 1 && cursor.seq <= last;
+  }
+
+  private resolveResumeCursor(
+    lastEventId: string | number | null | undefined,
+  ): WireEventId | null {
+    if (lastEventId === null || lastEventId === undefined) return null;
+    if (typeof lastEventId === "number") {
+      if (Number.isNaN(lastEventId)) return null;
+      // Bare numeric ids are only for in-process tests; wire clients must send epoch.
+      return { epoch: this.streamEpoch, seq: lastEventId };
+    }
+    const parsed = parseWireEventId(lastEventId);
+    if (parsed === null) return null;
+    if (parsed.epoch !== this.streamEpoch) return null;
+    return parsed;
   }
 
   /**
@@ -257,21 +315,27 @@ export class InboxStore {
       openedAt: existing.openedAt,
       answeredAt,
     };
-    // Persist before mutating the open set or emitting, so a disk failure
-    // cannot leave an answer half-applied (AC 11).
-    const previousHistory = this.history.get(id);
     this.history.set(id, record);
+    const handled: InboxItem = { ...existing, state, answeredAt };
+    let persistError: unknown;
     try {
       this.persistHistory();
     } catch (cause) {
-      if (previousHistory === undefined) this.history.delete(id);
-      else this.history.set(id, previousHistory);
-      throw cause;
+      // Keep in-memory history and drop from the open set so a delivered answer
+      // is not freely re-dispatched, then surface the persist failure.
+      persistError = cause;
     }
-    const handled: InboxItem = { ...existing, state, answeredAt };
     this.items.delete(id);
     this.emit({ type: "item.upsert", data: handled });
     this.emit({ type: "item.retract", data: { id } });
+    if (persistError !== undefined) {
+      throw new HistoryPersistError(
+        `answered history could not be written for ${id}: ${
+          persistError instanceof Error ? persistError.message : String(persistError)
+        }`,
+        { cause: persistError, item: handled },
+      );
+    }
     return handled;
   }
 
@@ -293,16 +357,7 @@ export class InboxStore {
   }
 
   private emit(partial: Omit<InboxStoreEvent, "id" | "at"> & { at?: string }): void {
-    const event: InboxStoreEvent = {
-      id: this.nextEventId++,
-      type: partial.type,
-      data: partial.data,
-      at: partial.at ?? this.now(),
-    };
-    this.eventBuffer.push(event);
-    while (this.eventBuffer.length > this.eventBufferSize) {
-      this.eventBuffer.shift();
-    }
+    const event = this.retainEvent(partial);
     for (const listener of this.listeners) {
       listener(event);
     }
@@ -336,6 +391,17 @@ export class InboxStore {
     const tmp = `${this.historyFile}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`, "utf8");
     renameSync(tmp, this.historyFile);
+  }
+}
+
+/** Thrown when answered history could not be written after the open set was updated. */
+export class HistoryPersistError extends Error {
+  readonly item: InboxItem;
+
+  constructor(message: string, options: { cause?: unknown; item: InboxItem }) {
+    super(message, options.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = "HistoryPersistError";
+    this.item = options.item;
   }
 }
 

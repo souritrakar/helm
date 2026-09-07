@@ -4,21 +4,42 @@
 import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 
-import { requireOperator } from "@/lib/require-operator";
+import { allowedHostsForBind, requireOperator } from "@/lib/require-operator";
 
 function req(headers: Record<string, string | string[] | undefined>): IncomingMessage {
   return { headers } as IncomingMessage;
 }
 
+const ALLOWED = allowedHostsForBind("127.0.0.1", 7333);
+
 describe("requireOperator", () => {
-  it("allows a local JSON mutating call with no Origin", () => {
+  it("allows a local JSON mutating call with an allowlisted Host", () => {
     expect(
-      requireOperator(req({ "content-type": "application/json" }), { mutate: true }),
+      requireOperator(req({ "content-type": "application/json", host: "127.0.0.1:7333" }), {
+        mutate: true,
+        allowedHosts: ALLOWED,
+      }),
     ).toEqual({ allow: true });
   });
 
   it("rejects mutating calls without application/json", () => {
-    const decision = requireOperator(req({ "content-type": "text/plain" }), { mutate: true });
+    const decision = requireOperator(
+      req({ "content-type": "text/plain", host: "127.0.0.1:7333" }),
+      { mutate: true, allowedHosts: ALLOWED },
+    );
+    expect(decision.allow).toBe(false);
+  });
+
+  it("rejects a Host outside the allowlist (DNS rebinding)", () => {
+    const decision = requireOperator(
+      req({
+        "content-type": "application/json",
+        host: "helm.attacker.example:7333",
+        origin: "http://helm.attacker.example:7333",
+        "sec-fetch-site": "same-origin",
+      }),
+      { mutate: true, allowedHosts: ALLOWED },
+    );
     expect(decision.allow).toBe(false);
   });
 
@@ -30,7 +51,7 @@ describe("requireOperator", () => {
         origin: "https://evil.example",
         host: "127.0.0.1:7333",
       }),
-      { mutate: true },
+      { mutate: true, allowedHosts: ALLOWED },
     );
     expect(decision.allow).toBe(false);
   });
@@ -42,7 +63,7 @@ describe("requireOperator", () => {
         origin: "http://evil.example:7333",
         host: "127.0.0.1:7333",
       }),
-      { mutate: true },
+      { mutate: true, allowedHosts: ALLOWED },
     );
     expect(decision.allow).toBe(false);
   });
@@ -56,8 +77,16 @@ describe("requireOperator", () => {
           host: "127.0.0.1:7333",
           "sec-fetch-site": "same-origin",
         }),
-        { mutate: true },
+        { mutate: true, allowedHosts: ALLOWED },
       ),
     ).toEqual({ allow: true });
+  });
+});
+
+describe("allowedHostsForBind", () => {
+  it("includes loopback spellings for the configured port", () => {
+    const hosts = allowedHostsForBind("127.0.0.1", 7333);
+    expect(hosts).toContain("127.0.0.1:7333");
+    expect(hosts).toContain("localhost:7333");
   });
 });

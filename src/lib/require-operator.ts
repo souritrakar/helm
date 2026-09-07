@@ -2,8 +2,9 @@
  * Operator gate for browser→server calls (SPEC D10 item 3).
  *
  * Phase 1 returns "allow" for local same-origin / non-browser callers and
- * refuses cross-site CSRF and non-JSON mutating bodies. Phase 2 swaps the
- * body of this function; call sites do not move.
+ * refuses cross-site CSRF, non-JSON mutating bodies, and Host headers outside
+ * the loopback/bind allowlist (DNS-rebinding). Phase 2 swaps the body of this
+ * function; call sites do not move.
  */
 import type { IncomingMessage } from "node:http";
 
@@ -17,14 +18,40 @@ export interface RequireOperatorOptions {
    * `text/plain` POST cannot reach a mutating handler without a preflight.
    */
   readonly mutate?: boolean;
+  /**
+   * Allowed `Host` header values (e.g. `127.0.0.1:7333`, `localhost:7333`).
+   * When set, a missing or non-allowlisted Host is refused (captain decision
+   * `require-operator-no-host-allowlist`).
+   */
+  readonly allowedHosts?: readonly string[];
+}
+
+/**
+ * Build the phase-1 Host allowlist from helm's bind address and port.
+ *
+ * Always includes loopback spellings so a mis-set Host cannot DNS-rebind past
+ * the gate. When `bind` is a concrete address it is included as well.
+ */
+export function allowedHostsForBind(bind: string, port: number): string[] {
+  const hosts = new Set<string>([
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    `[::1]:${port}`,
+    `::1:${port}`,
+  ]);
+  if (bind !== "0.0.0.0" && bind !== "::" && bind !== "[::]") {
+    hosts.add(bind.includes(":") && !bind.startsWith("[") ? `[${bind}]:${port}` : `${bind}:${port}`);
+    hosts.add(`${bind}:${port}`);
+  }
+  return [...hosts];
 }
 
 /**
  * Decide whether `req` may proceed as the local operator.
  *
- * Local-mode allow: no Origin (curl / same-machine tools), or Origin host
- * matching `Host`, and Sec-Fetch-Site not `cross-site`. Mutating calls must
- * declare JSON Content-Type.
+ * Local-mode allow: Host on the allowlist (when configured), no cross-site
+ * Sec-Fetch-Site, Origin host matching Host when Origin is present. Mutating
+ * calls must declare JSON Content-Type.
  */
 export function requireOperator(
   req: IncomingMessage,
@@ -36,6 +63,19 @@ export function requireOperator(
       return {
         allow: false,
         reason: "Content-Type must be application/json for mutating requests",
+      };
+    }
+  }
+
+  const host = header(req, "host");
+  if (options.allowedHosts !== undefined && options.allowedHosts.length > 0) {
+    if (host === undefined) {
+      return { allow: false, reason: "Host header is required" };
+    }
+    if (!isAllowedHost(host, options.allowedHosts)) {
+      return {
+        allow: false,
+        reason: `Host ${JSON.stringify(host)} is not on the operator allowlist`,
       };
     }
   }
@@ -53,7 +93,6 @@ export function requireOperator(
     } catch {
       return { allow: false, reason: `invalid Origin ${JSON.stringify(origin)}` };
     }
-    const host = header(req, "host");
     if (host !== undefined && originHost !== host) {
       return {
         allow: false,
@@ -63,6 +102,11 @@ export function requireOperator(
   }
 
   return { allow: true };
+}
+
+function isAllowedHost(host: string, allowed: readonly string[]): boolean {
+  const normalized = host.trim().toLowerCase();
+  return allowed.some((candidate) => candidate.trim().toLowerCase() === normalized);
 }
 
 function isJsonContentType(value: string): boolean {

@@ -90,7 +90,7 @@ export function createResponder(options: ResponderOptions): Responder {
         answer = requireAnswer(action);
       } catch (cause) {
         const refused = refusedResult(
-          channel === "none" ? "none" : channel,
+          channel,
           cause instanceof Error ? cause.message : String(cause),
         );
         options.audit.append(auditEntryFromResult(item.id, action, refused));
@@ -125,9 +125,12 @@ export function createResponder(options: ResponderOptions): Responder {
             result = await executors.captainHold(item, answer);
             break;
           case "relay":
-            // Enforce before any executor (including test overrides) so a
-            // multi-line answer cannot reach paneRun.
+            // Enforce before any executor (including test overrides). Guard the
+            // composed pane message too — item.id is adapter-derived untrusted
+            // input and must not inject a second Enter submission.
             requireRelaySingleLine(answer);
+            requireRelaySingleLine(item.id);
+            requireRelaySingleLine(`[helm ${item.id}] ${answer}`);
             result = await executors.relay(item, answer);
             break;
           default: {

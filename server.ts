@@ -21,10 +21,12 @@ import next from "next";
 import { ConfigError, loadConfig } from "./src/lib/config";
 import { handleInboxHttp } from "./src/lib/inbox-http";
 import { createInboxRuntime } from "./src/lib/inbox-runtime";
+import { allowedHostsForBind } from "./src/lib/require-operator";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const dev = process.env.NODE_ENV !== "production";
+  const allowedHosts = allowedHostsForBind(config.bind, config.port);
 
   const inbox = createInboxRuntime(config);
   await inbox.start();
@@ -39,6 +41,7 @@ async function main(): Promise<void> {
         const owned = await handleInboxHttp(req, res, {
           store: inbox.store,
           responder: inbox.responder,
+          allowedHosts,
         });
         if (!owned) {
           await handle(req, res);
