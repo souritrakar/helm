@@ -50,6 +50,11 @@ function openStream(): FakeEventSource {
   return stream;
 }
 
+async function awaitStream(): Promise<FakeEventSource> {
+  await vi.waitFor(() => expect(FakeEventSource.current).not.toBeNull());
+  return openStream();
+}
+
 beforeEach(async () => {
   FakeEventSource.current = null;
   showNotification.mockClear();
@@ -63,6 +68,7 @@ beforeEach(async () => {
   });
   render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
   await vi.waitFor(() => expect(navigator.serviceWorker.register).toHaveBeenCalledWith("/helm-sw.js"));
+  await awaitStream();
 });
 
 afterEach(() => {
@@ -214,8 +220,9 @@ describe("inbox notification stream", () => {
       value: { register: vi.fn(() => new Promise((resolve) => { resolveRegistration = resolve; })) },
     });
     cleanup();
+    FakeEventSource.current = null;
     render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
-    const stream = openStream();
+    const stream = await awaitStream();
     act(() => {
       setVisibility("hidden");
       stream.emit("snapshot.begin");
@@ -235,8 +242,9 @@ describe("inbox notification stream", () => {
       value: { register: vi.fn(() => new Promise((resolve) => { resolveRegistration = resolve; })) },
     });
     cleanup();
+    FakeEventSource.current = null;
     render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
-    const stream = openStream();
+    const stream = await awaitStream();
     act(() => {
       setVisibility("hidden");
       stream.emit("snapshot.begin");
@@ -252,6 +260,7 @@ describe("inbox notification stream", () => {
 
   it("remints and replays the latest visibility report after a rejected session", async () => {
     cleanup();
+    FakeEventSource.current = null;
     let postCount = 0;
     const fetchMock = vi.fn((_: unknown, init?: RequestInit) => {
       if (init?.method === "POST") {
@@ -275,6 +284,24 @@ describe("inbox notification stream", () => {
     }));
   });
 
+  it("waits for the initial visibility report before opening the event stream", async () => {
+    cleanup();
+    FakeEventSource.current = null;
+    let acceptPresence: ((response: { ok: boolean; status: number }) => void) | undefined;
+    const fetchMock = vi.fn((_: unknown, init?: RequestInit) => {
+      if (init?.method === "POST") return new Promise((resolve) => { acceptPresence = resolve; });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: "session" }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(FakeEventSource.current).toBeNull();
+
+    act(() => acceptPresence?.({ ok: true, status: 200 }));
+    await awaitStream();
+  });
+
   it("delivers only the current occurrence after a pending worker becomes active", async () => {
     let resolveReady: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
     Object.defineProperty(navigator, "serviceWorker", {
@@ -285,8 +312,9 @@ describe("inbox notification stream", () => {
       },
     });
     cleanup();
+    FakeEventSource.current = null;
     render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
-    const stream = openStream();
+    const stream = await awaitStream();
     act(() => {
       setVisibility("hidden");
       stream.emit("snapshot.begin");
@@ -299,6 +327,32 @@ describe("inbox notification stream", () => {
 
     await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
     expect(showNotification).toHaveBeenCalledWith("Replacement action needed", expect.objectContaining({ tag: "status:reraised-pending" }));
+  });
+
+  it("invalidates pending notification delivery at snapshot start", async () => {
+    let resolveReady: ((registration: { showNotification: typeof showNotification }) => void) | undefined;
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        register: vi.fn(() => Promise.resolve({ showNotification })),
+        ready: new Promise((resolve) => { resolveReady = resolve; }),
+      },
+    });
+    cleanup();
+    FakeEventSource.current = null;
+    render(<InboxNotificationProvider><Probe /></InboxNotificationProvider>);
+    const stream = await awaitStream();
+    act(() => {
+      setVisibility("hidden");
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:snapshot-pending"));
+      stream.emit("snapshot.begin");
+      resolveReady?.({ showNotification });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(showNotification).not.toHaveBeenCalled();
   });
 
   it("keeps a rejected browser notification best-effort", async () => {

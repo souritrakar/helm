@@ -101,6 +101,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
   const notificationGeneration = useRef(0);
   const snapshotStates = useRef<Map<string, BlockingNotificationState> | null>(null);
   const snapshotting = useRef(false);
+  const visibilityReady = useRef<Promise<boolean>>(Promise.resolve(false));
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
@@ -117,6 +118,11 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
     let reportVersion = 0;
     let sentVersion = 0;
     let flushing = false;
+    let initialReportPending = true;
+    let resolveInitialReport: (accepted: boolean) => void = () => undefined;
+    visibilityReady.current = new Promise((resolve) => {
+      resolveInitialReport = resolve;
+    });
 
     const createSession = async (): Promise<string | null> => {
       try {
@@ -138,7 +144,13 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
         if (session === null) {
           session = await createSession();
           sessionSequence = 0;
-          if (session === null) break;
+          if (session === null) {
+            if (initialReportPending) {
+              initialReportPending = false;
+              resolveInitialReport(false);
+            }
+            break;
+          }
         }
         const version = reportVersion;
         const report = latestReport;
@@ -152,8 +164,16 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
             session = null;
             continue;
           }
+          if (initialReportPending) {
+            initialReportPending = false;
+            resolveInitialReport(response.ok);
+          }
           sentVersion = version;
         } catch {
+          if (initialReportPending) {
+            initialReportPending = false;
+            resolveInitialReport(false);
+          }
           sentVersion = version;
         }
       }
@@ -180,6 +200,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
     document.addEventListener("visibilitychange", report);
     return () => {
       cancelled = true;
+      if (initialReportPending) resolveInitialReport(false);
       window.clearInterval(timer);
       window.removeEventListener("focus", report);
       window.removeEventListener("blur", report);
@@ -198,20 +219,25 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
   }, []);
 
   useEffect(() => {
-    const stream = new EventSource("/api/events");
-    stream.addEventListener("snapshot.begin", () => {
-      snapshotting.current = true;
-      snapshotStates.current = new Map();
-      setUnreadBlocking(0);
-    });
-    stream.addEventListener("snapshot.end", () => {
-      if (!snapshotting.current) return;
-      blockingStates.current = snapshotStates.current ?? new Map();
-      snapshotStates.current = null;
-      snapshotting.current = false;
-      setUnreadBlocking(0);
-    });
-    stream.addEventListener("item.upsert", (raw) => {
+    let cancelled = false;
+    let stream: EventSource | null = null;
+    void visibilityReady.current.then((ready) => {
+      if (cancelled || !ready) return;
+      stream = new EventSource("/api/events");
+      stream.addEventListener("snapshot.begin", () => {
+        snapshotting.current = true;
+        blockingStates.current = new Map();
+        snapshotStates.current = new Map();
+        setUnreadBlocking(0);
+      });
+      stream.addEventListener("snapshot.end", () => {
+        if (!snapshotting.current) return;
+        blockingStates.current = snapshotStates.current ?? new Map();
+        snapshotStates.current = null;
+        snapshotting.current = false;
+        setUnreadBlocking(0);
+      });
+      stream.addEventListener("item.upsert", (raw) => {
       const item = parseInboxEventItem((raw as MessageEvent<string>).data);
       if (item === null) return;
       if (item.state !== "open") return;
@@ -270,8 +296,8 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
           return undefined;
         }).catch(() => undefined);
       }
-    });
-    stream.addEventListener("item.retract", (raw) => {
+      });
+      stream.addEventListener("item.retract", (raw) => {
       try {
         const { id } = JSON.parse((raw as MessageEvent<string>).data) as { id?: string };
         if (id !== undefined) {
@@ -283,8 +309,12 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
       } catch {
         // Ignore a malformed internal event; the next snapshot restores state.
       }
+      });
     });
-    return () => stream.close();
+    return () => {
+      cancelled = true;
+      stream?.close();
+    };
   }, []);
 
   const requestPermission = useCallback(async () => {
