@@ -8,17 +8,20 @@
  */
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
 
+import type { HelmEndpoint } from "./config";
+
 const LISTEN_STATE = "0A";
 const SOCKET_LINK = /^socket:\[(\d+)]$/;
 
 /**
- * Every visible pid listening on `port`, in procfs order.
+ * Every visible pid listening on `endpoint`, in procfs order.
  *
- * One port can carry several listeners on different local addresses, so the
- * caller must weigh them all rather than trust whichever procfs yields first.
+ * One port can carry several listeners on different local addresses. Match the
+ * configured local address too, so a helm socket on another address cannot
+ * vouch for a foreign process that owns the configured endpoint.
  */
-export function listenerPids(port: number): number[] {
-  const inodes = listeningInodes(port);
+export function listenerPids(endpoint: HelmEndpoint): number[] {
+  const inodes = listeningInodes(endpoint);
   if (inodes.size === 0) return [];
   return processIds().filter((pid) => ownsAnyInode(pid, inodes));
 }
@@ -34,19 +37,59 @@ export function belongsToProcessGroup(pid: number, leader: number): boolean {
   return pid === leader || processGroupId(pid) === leader;
 }
 
-function listeningInodes(port: number): Set<string> {
+function listeningInodes(endpoint: HelmEndpoint): Set<string> {
   const inodes = new Set<string>();
   for (const table of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    const address = procAddress(endpoint.bind, table);
+    if (address === null) continue;
     for (const line of readText(table).split("\n").slice(1)) {
       const fields = line.trim().split(/\s+/);
       if (fields.length < 10 || fields[3] !== LISTEN_STATE) continue;
       const local = fields[1] ?? "";
-      if (Number.parseInt(local.slice(local.lastIndexOf(":") + 1), 16) === port) {
+      const [localAddress, localPort] = local.split(":");
+      if (localAddress === address && Number.parseInt(localPort ?? "", 16) === endpoint.port) {
         inodes.add(fields[9] as string);
       }
     }
   }
   return inodes;
+}
+
+function procAddress(bind: string, table: string): string | null {
+  if (table.endsWith("tcp")) return ipv4ProcAddress(bind);
+  return ipv6ProcAddress(bind);
+}
+
+function ipv4ProcAddress(bind: string): string | null {
+  const octets = bind.split(".");
+  if (octets.length !== 4 || octets.some((octet) => !/^\d+$/.test(octet))) return null;
+  const values = octets.map(Number);
+  if (values.some((octet) => octet < 0 || octet > 255)) return null;
+  return values.reverse().map((octet) => octet.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+function ipv6ProcAddress(bind: string): string | null {
+  const groups = expandIpv6(bind);
+  if (groups === null) return null;
+  const networkOrder = groups.map((group) => group.toString(16).padStart(4, "0")).join("");
+  return networkOrder.match(/.{8}/g)!.map(reverseBytes).join("").toUpperCase();
+}
+
+function expandIpv6(address: string): number[] | null {
+  if (address.includes(".")) return null;
+  const halves = address.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] === "" ? [] : halves[0]!.split(":");
+  const right = halves.length === 1 || halves[1] === "" ? [] : halves[1]!.split(":");
+  const groups = [...left, ...right];
+  if (groups.some((group) => !/^[0-9a-fA-F]{1,4}$/.test(group))) return null;
+  if (halves.length === 1 && groups.length !== 8) return null;
+  if (groups.length > 8) return null;
+  return [...left, ...Array(8 - groups.length).fill("0"), ...right].map((group) => Number.parseInt(group, 16));
+}
+
+function reverseBytes(hex: string): string {
+  return hex.match(/.{2}/g)!.reverse().join("");
 }
 
 function ownsAnyInode(pid: number, inodes: ReadonlySet<string>): boolean {

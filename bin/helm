@@ -97,8 +97,11 @@ start() {
   if pid_is_live; then echo "helm: already running (pid $(pid_from_file)); refusing to double-bind" >&2; return 1; fi
   doctor; rotate_logs
   if [[ "${HELM_FOREGROUND:-0}" == "1" ]]; then
-    write_pid "$$"
-    exec >> "$LOG_FILE" 2>&1; exec pnpm --dir "$HELM_ROOT" start
+    exec >> "$LOG_FILE" 2>&1
+    setsid bash -c 'cd "$1" && exec pnpm start' helm "$HELM_ROOT" &
+    write_pid "$!"
+    wait "$!"
+    return $?
   fi
   local bind port
   if ! read -r bind port < <(endpoint); then echo "helm: refusing to start; the configuration is not usable" >&2; return 1; fi
@@ -128,7 +131,14 @@ status() {
 }
 # Each value becomes sed replacement text and then a systemd unit value: `\`, `&`,
 # and `|` are sed syntax, and a bare `%` is a systemd specifier systemd expands.
-unit_value() { printf '%s' "${1//%/%%}" | sed -e 's/[\\&|]/\\&/g'; }
+unit_value() {
+  local label="$1" value="$2"
+  if [[ "$value" =~ [[:cntrl:]] || "$value" == *'"'* || "$value" == *"'"* || "$value" == *\\* ]]; then
+    echo "helm: refusing to install the service; $label contains systemd unit syntax requiring escaping" >&2
+    return 1
+  fi
+  printf '%s' "${value//%/%%}" | sed -e 's/[\\&|]/\\&/g'
+}
 logs() { ensure_state_dir; [[ -f "$LOG_FILE" ]] && tail -n 200 "$LOG_FILE" || echo "helm: no service log at $LOG_FILE"; }
 install_service() {
   local unit_dir="$HOME/.config/systemd/user" template temp bind port fm_home linger_blocked=0
@@ -138,10 +148,10 @@ install_service() {
   if ! read -r bind port fm_home < <(service_config); then
     echo "helm: refusing to install the service; the configuration is not usable" >&2; return 1
   fi
-  root_pattern="$(unit_value "$HELM_ROOT")"
-  state_pattern="$(unit_value "$HELM_STATE_DIR")"
-  fm_pattern="$(unit_value "$fm_home")"
-  bind_pattern="$(unit_value "$bind")"
+  root_pattern="$(unit_value HELM_ROOT "$HELM_ROOT")" || return 1
+  state_pattern="$(unit_value HELM_STATE_DIR "$HELM_STATE_DIR")" || return 1
+  fm_pattern="$(unit_value FM_HOME "$fm_home")" || return 1
+  bind_pattern="$(unit_value HELM_BIND "$bind")" || return 1
   mkdir -p "$unit_dir"
   for template in "$HELM_ROOT/systemd/helm.service" "$HELM_ROOT/systemd/helm-logrotate.service" "$HELM_ROOT/systemd/helm-logrotate.timer"; do
     temp="$(mktemp)"

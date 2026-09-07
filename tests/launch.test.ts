@@ -30,6 +30,13 @@ describe("launch checks", () => {
     // 192.0.2.1 is TEST-NET-1: reserved for documentation, never a local address.
     await expect(probePort("192.0.2.1", 7333)).resolves.toEqual({ available: false, code: "EADDRNOTAVAIL" });
   });
+  it("matches an IPv4 wildcard only to its wildcard listener", async () => {
+    server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "0.0.0.0", resolve));
+    const address = server.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
+
+    expect(listenerPids({ bind: "0.0.0.0", port: address.port })).toContain(process.pid);
+    expect(listenerPids({ bind: "127.0.0.1", port: address.port })).not.toContain(process.pid);
+  });
   it("accepts a busy endpoint only when the claimed instance is the real listener", async () => {
     server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const address = server.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
@@ -54,22 +61,24 @@ describe("launch checks", () => {
       await new Promise<void>((resolve) => bystander.once("exit", () => resolve()));
     }
   });
-  it("still recognises helm's socket when a second address holds the same port", async () => {
-    server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+  it("rejects a foreign configured endpoint when helm listens on another address", async () => {
+    server = createServer(); await new Promise<void>((resolve) => server!.listen(0, "127.0.0.2", resolve));
     const address = server.address(); if (address === null || typeof address === "string") throw new Error("expected TCP address");
-    // 127.0.0.2 does not conflict with 127.0.0.1, so both listeners hold this port.
+    // 127.0.0.1 and 127.0.0.2 do not conflict, so process.pid holds a different endpoint.
     const neighbour = spawn(process.execPath, [
       "-e",
-      'require("node:net").createServer().listen(Number(process.argv[1]), "127.0.0.2", () => console.log("ready"));',
+      'require("node:net").createServer().listen(Number(process.argv[1]), "127.0.0.1", () => console.log("ready"));',
       String(address.port),
     ]);
     await new Promise<void>((resolve) => neighbour.stdout.once("data", () => resolve()));
     try {
       const doctor = await launchDoctor(endpointConfig(address.port), { portOwnerPid: process.pid });
 
-      expect(listenerPids(address.port)).toEqual(expect.arrayContaining([process.pid, neighbour.pid]));
-      expect(doctor.portHeldByHelm).toBe(true);
-      expect(doctor.problems.join(" ")).not.toContain("already in use");
+      expect(listenerPids(endpointConfig(address.port))).toContain(neighbour.pid);
+      expect(listenerPids(endpointConfig(address.port))).not.toContain(process.pid);
+      expect(listenerPids({ bind: "127.0.0.2", port: address.port })).toContain(process.pid);
+      expect(doctor.portHeldByHelm).toBe(false);
+      expect(doctor.problems.join(" ")).toContain("not by the running helm instance");
     } finally {
       neighbour.kill("SIGKILL");
       await new Promise<void>((resolve) => neighbour.once("exit", () => resolve()));
