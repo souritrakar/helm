@@ -14,23 +14,53 @@ function agentState(config: HelmConfig): InboxAdapter {
     async start(ctx) {
       const blocked = new Map<string, InboxItem>();
       const agents = await agentList(config);
+      const panes = new Set(agents.map((agent) => agent.pane_id));
       for (const agent of agents.filter((candidate) => candidate.agent_status === "blocked")) {
         blocked.set(agent.pane_id, blockedItem(agent.pane_id, agent.terminal_title ?? agent.agent));
       }
       ctx.emit([...blocked.values()]);
-      const subscriptions = agents.map((agent) => ({ type: "pane.agent_status_changed" as const, pane_id: agent.pane_id }));
-      if (subscriptions.length === 0) return { [Symbol.dispose]() {} };
-      const stream = subscribeEvents(config, subscriptions, (event) => {
-        if (event.event !== "pane.agent_status_changed") return;
-        const { pane_id: paneId, agent_status: status, title, agent } = event.data;
-        if (status === "blocked") {
-          blocked.set(paneId, blockedItem(paneId, title ?? agent));
-        } else blocked.delete(paneId);
-        ctx.emit([...blocked.values()]);
-      });
-      await stream.ready;
-      reportStreamFailure("agent-state", stream);
-      return { [Symbol.dispose]() { stream.close(); } };
+      let stopped = false;
+      let current: HerdrEventStream | undefined;
+      let generation = 0;
+      let scheduled = Promise.resolve();
+
+      const subscribe = async (): Promise<void> => {
+        if (stopped) return;
+        const ownGeneration = ++generation;
+        const previous = current;
+        const stream = subscribeEvents(config, [
+          { type: "pane.created" },
+          { type: "pane.closed" },
+          ...[...panes].map((paneId) => ({ type: "pane.agent_status_changed" as const, pane_id: paneId })),
+        ], (event) => {
+          if (stopped || generation !== ownGeneration) return;
+          if (event.event === "pane.agent_status_changed") {
+            const { pane_id: paneId, agent_status: status, title, agent } = event.data;
+            if (status === "blocked") blocked.set(paneId, blockedItem(paneId, title ?? agent));
+            else blocked.delete(paneId);
+            ctx.emit([...blocked.values()]);
+          } else if (event.event === "pane_created") {
+            panes.add(event.data.pane.pane_id);
+            queueSubscription();
+          } else if (event.event === "pane_closed") {
+            panes.delete(event.data.pane_id);
+            blocked.delete(event.data.pane_id);
+            ctx.emit([...blocked.values()]);
+            queueSubscription();
+          }
+        });
+        current = stream;
+        reportStreamFailure("agent-state", stream);
+        await stream.ready;
+        if (stopped || generation !== ownGeneration) stream.close();
+        else previous?.close();
+      };
+      function queueSubscription(): void {
+        scheduled = scheduled.catch(() => undefined).then(subscribe).catch((cause: unknown) => console.error("agent-state: subscription failed", cause));
+      }
+
+      await subscribe();
+      return { [Symbol.dispose]() { stopped = true; generation++; current?.close(); } };
     },
   };
 }
@@ -52,14 +82,16 @@ function outputMatch(config: HelmConfig): InboxAdapter {
       const matched = new Map<string, InboxItem>();
       const stream = subscribeEvents(config, patterns.map(subscriptionFor), (event) => {
         if (event.event !== "pane.output_matched") return;
-        const pattern = patterns.find((candidate) => candidate.paneId === event.data.pane_id && lineMatches(candidate, event.data.matched_line));
-        if (pattern === undefined) return;
-        const key = `${pattern.id}:${event.data.pane_id}:${event.data.read.revision}`;
-        matched.set(key, item("output-match", key, {
-          kind: "custom", urgency: pattern.urgency ?? "attention", title: pattern.title ?? `Output matched: ${pattern.id}`,
-          detail: event.data.matched_line, options: [], allowFreeform: true,
-          respond: { channel: "relay", target: event.data.pane_id }, evidence: [],
-        }));
+        const matching = patterns.filter((candidate) => candidate.paneId === event.data.pane_id && candidate.source === event.data.read.source && lineMatches(candidate, event.data.matched_line));
+        if (matching.length === 0) return;
+        for (const pattern of matching) {
+          const key = `${pattern.id}:${event.data.pane_id}:${event.data.read.revision}`;
+          matched.set(key, item("output-match", key, {
+            kind: "custom", urgency: pattern.urgency ?? "attention", title: pattern.title ?? `Output matched: ${pattern.id}`,
+            detail: event.data.matched_line, options: [], allowFreeform: true,
+            respond: { channel: "relay", target: event.data.pane_id }, evidence: [],
+          }));
+        }
         ctx.emit([...matched.values()]);
       });
       await stream.ready;

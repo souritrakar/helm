@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 afterEach(() => { for (const disposer of disposers) disposer[Symbol.dispose](); rmSync(root, { recursive: true, force: true }); });
 
-async function start(adapter: ReturnType<typeof createStateAdapters>[number]): Promise<void> {
+async function start(adapter: ReturnType<typeof createStateAdapters>[number] | ReturnType<typeof createHerdrAdapters>[number]): Promise<void> {
   disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
 }
 function stateAdapter(id: string) { return createStateAdapters(config).find((adapter) => adapter.id === id)!; }
@@ -90,5 +90,56 @@ describe("output-match adapter", () => {
     await vi.waitUntil(() => emitted.length > 0);
     expect(request).toMatchObject({ method: "events.subscribe", params: { subscriptions: [{ type: "pane.output_matched", pane_id: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] } });
     expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: "w1:p2" } }]);
+  });
+
+  it("uses the event source and emits every overlapping configured pattern", async () => {
+    server = createServer((socket) => { connection = socket; socket.once("data", () => {
+      socket.write('{"result":{"type":"subscription_started"}}\n');
+      socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
+    }); });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    config = { ...config, outputMatches: [
+      { id: "recent", paneId: "w1:p2", source: "recent", match: { type: "substring", value: "failed" }, title: "Recent failure" },
+      { id: "visible-a", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Visible failure" },
+      { id: "visible-b", paneId: "w1:p2", source: "visible", match: { type: "regex", value: "deploy" }, title: "Deploy output" },
+    ] };
+    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!);
+    await vi.waitUntil(() => emitted.at(-1)?.length === 2);
+    expect(emitted.at(-1)?.map((entry) => entry.id)).toEqual([
+      "output-match:visible-a:w1:p2:4", "output-match:visible-b:w1:p2:4",
+    ]);
+  });
+});
+
+describe("agent-state adapter", () => {
+  let server: Server;
+  const connections = new Set<Socket>();
+  const requests: unknown[] = [];
+  afterEach(async () => {
+    for (const connection of connections) connection.destroy();
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("resubscribes for an agent pane created after startup", async () => {
+    const herdr = join(root, "herdr");
+    writeFileSync(herdr, "#!/bin/sh\nprintf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[]}}'\n");
+    chmodSync(herdr, 0o755);
+    config = { ...config, herdrBin: herdr };
+    server = createServer((socket) => {
+      connections.add(socket);
+      socket.once("data", (raw) => {
+        requests.push(JSON.parse(raw.toString()));
+        socket.write('{"result":{"type":"subscription_started"}}\n');
+        if (requests.length === 1) {
+          socket.write('{"event":"pane_created","data":{"type":"pane_created","pane":{"pane_id":"w1:p9","terminal_id":"term-9","workspace_id":"w1","tab_id":"t1","focused":false,"agent_status":"working","revision":1}}}\n');
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    await vi.waitUntil(() => requests.length === 2);
+    expect(requests[1]).toMatchObject({ method: "events.subscribe", params: { subscriptions: expect.arrayContaining([
+      { type: "pane.agent_status_changed", pane_id: "w1:p9" },
+    ]) } });
   });
 });
