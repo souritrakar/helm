@@ -16,14 +16,15 @@ scripts and `herdr` commands — the same commands the operator would type. It w
 
 ## Status
 
-Lanes A (foundation and contracts), C (the inbox core), D (source adapters), and F (the UI shell)
-are built. Lane C provides the store, answered-history, SSE stream, response endpoint, audit log,
-responder, and adapter registry. Lane D registers eight read-only producers: firstmate status
-decisions, captain holds, bearings, captain notes, steering backlog, and process events; plus Herdr
-agent-state and configured output-match events. The shell still renders fixture data:
-its options and freeform input keep local component state and do not yet call the response endpoint.
-Answered and dismissed cards render read-only. The terminal bridge and service launcher are later
-lanes.
+Lanes A (foundation and contracts), C (the inbox core), D (source adapters), F (the UI shell), and
+G (notifications) are built. Lane C provides the store, answered-history, SSE stream, response
+endpoint, audit log, responder, and adapter registry. Lane D registers eight read-only producers:
+firstmate status decisions, captain holds, bearings, captain notes, steering backlog, and process
+events; plus Herdr agent-state and configured output-match events. The shell still renders fixture
+data: its options and freeform input keep local component state and do not yet call the response
+endpoint. Answered and dismissed cards render read-only. Notifications observe rendered DOM cards;
+live-card observation depends on Lane H rendering the store into the shell. The terminal bridge and
+service launcher are later lanes.
 
 ## Requirements
 
@@ -77,13 +78,15 @@ long-lived WebSocket carrying a terminal stream, which cannot live in a Next.js 
 
 ## Inbox API
 
-Lane C exposes these local HTTP endpoints for the later UI:
+Lane C and Lane G expose these local HTTP endpoints:
 
 | Endpoint | Behavior |
 | --- | --- |
 | `GET /api/inbox` | Returns the current open items. |
 | `GET /api/events` | Opens an SSE stream. A matching `Last-Event-ID` resumes buffered events; a missing, stale, or different-process id receives a complete snapshot. |
 | `POST /api/inbox/:id/respond` | Delivers exactly one declared option (`value`) or permitted freeform reply (`text`), then records the result. Requests must be JSON and pass the local operator gate. |
+| `GET /api/inbox/visibility` | Mints a helm-session token for presence reports. Local operator gate. |
+| `POST /api/inbox/visibility` | Reports whether the tab is active and which rendered card ids are on screen. Requires the session token (`X-Helm-Visibility-Session`) and a monotonic `sequence`. Presence only — never answers or mutates inbox items. |
 
 Responses are routed conservatively: only typed, non-freeform status decisions use the keyed
 firstmate seam. Captain-held, merge, credential, destructive, irreversible, security-sensitive,
@@ -95,12 +98,13 @@ and all freeform replies are relayed to firstmate instead. Every attempted route
 
 | Path | What |
 | --- | --- |
-| `src/components/` | The UI shell (`helm-shell.tsx`), the split-size cookie, and the shadcn primitives. |
+| `src/components/` | The UI shell (`helm-shell.tsx`), the split-size cookie, the read-only inbox notification layer, and the shadcn primitives. |
 | `src/lib/types.ts` | `InboxItem`, `InboxAdapter`, `RespondResult` — the contracts every lane imports. |
-| `src/lib/herdr.ts` | The single place any Herdr access lives: terminal observer, pane commands, discovery, `events.subscribe`, capability check. |
+| `src/lib/herdr.ts` | The single place any Herdr access lives: terminal observer, pane commands, discovery, `events.subscribe`, capability check, `herdr notification show`. |
 | `src/lib/fm.ts` | Typed argv wrappers over the firstmate seams, each schema-validated. |
 | `src/lib/inbox-store.ts` | Full-set reconciliation, answered history, and the SSE event buffer. |
-| `src/lib/inbox-http.ts` | The inbox list, event-stream, and response HTTP handlers. |
+| `src/lib/inbox-http.ts` | The inbox list, event-stream, response, and visibility HTTP handlers. |
+| `src/lib/inbox-visibility.ts` | Process-local operator presence used to suppress native Herdr nudges for on-screen cards. |
 | `src/lib/responder.ts` | Conservative answer routing and response audit. |
 | `src/lib/adapters/` | Production Lane D source adapters, their registry, and the test fake adapter. |
 | `src/lib/config.ts` | Configuration loading and validation. |

@@ -45,10 +45,18 @@ These are not style preferences. Each one protects something that fails silently
 - helm runs a **custom Node server** (`server.ts`), not `next start`, because a later lane serves a
   long-lived WebSocket carrying a terminal stream. The scaffold uses Next 16 (current release);
   the SPEC, written earlier, says Next 15. Lane C also serves SSE `/api/events` and
-  `POST /api/inbox/:id/respond` from that server (`src/lib/inbox-http.ts`).
+  `POST /api/inbox/:id/respond` from that server; Lane G adds `GET`/`POST /api/inbox/visibility`
+  (`src/lib/inbox-http.ts`).
 - **Inbox core** lives under `src/lib/inbox-store.ts`, `responder.ts`, `adapters/`, and
   `inbox-runtime.ts`. Adapters emit a full open set; the store reconciles by id. Answered history
   and the audit log write under `HELM_STATE_DIR` (default `~/.local/state/helm`), never `$FM_HOME`.
+- **Notifications are read-only.** Toast, unread badge, browser `Notification` (`tag` = item id),
+  and `herdr notification show` announce blocking items; they never answer, route, or mutate.
+  Suppress the Herdr-native nudge only when an authorized session reports the tab is **visible and
+  focused** and the rendered card is on screen (`src/lib/inbox-visibility.ts`). Presence is
+  `GET`/`POST /api/inbox/visibility` with a per-session monotonic sequence. Lane G observes
+  existing `[data-inbox-item-id]` DOM cards; live store cards depend on Lane H rendering the
+  store into the shell.
 - **Responder routing (D-C, ratified 2026-09-06):** keyed status decisions → `resolve-key` (direct);
   captain-held (`channel: "captain-hold"`), freeform, and anything merge/credential/destructive →
   `relay` always. `routeChannel` forces that relay; it never selects the direct

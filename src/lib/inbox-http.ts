@@ -1,5 +1,6 @@
 /**
- * HTTP handlers for the inbox event stream and respond endpoint.
+ * HTTP handlers for the inbox event stream, respond endpoint, and operator
+ * presence reports used by the read-only notification layer.
  *
  * Served from the custom Node server (SPEC D5): SSE needs a long-lived
  * connection with `Last-Event-ID` resume, which does not belong in a Next.js

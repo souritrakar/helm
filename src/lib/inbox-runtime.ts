@@ -1,6 +1,6 @@
 /**
- * Wires the inbox store, responder, audit log, and adapter registry for the
- * long-lived Node server process.
+ * Wires the inbox store, responder, audit log, adapter registry, and
+ * read-only notification bridge for the long-lived Node server process.
  */
 import type { HelmConfig } from "./config";
 import { createFileAuditWriter } from "./audit";
