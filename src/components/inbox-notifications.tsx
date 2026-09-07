@@ -33,11 +33,36 @@ function browserPermission(): NotificationPermissionState {
 }
 
 function itemIsVisible(id: string): boolean {
-  return [...document.querySelectorAll<HTMLElement>("[data-inbox-item-id]")].some((element) => {
-    if (element.dataset.inboxItemId !== id) return false;
-    const rect = element.getBoundingClientRect();
-    return rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
-  });
+  return [...document.querySelectorAll<HTMLElement>("[data-inbox-item-id]")]
+    .some((element) => element.dataset.inboxItemId === id && elementHasVisiblePixels(element));
+}
+
+function elementHasVisiblePixels(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  let top = Math.max(rect.top, 0);
+  let right = Math.min(rect.right, window.innerWidth);
+  let bottom = Math.min(rect.bottom, window.innerHeight);
+  let left = Math.max(rect.left, 0);
+
+  for (let ancestor = element.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
+    const style = window.getComputedStyle(ancestor);
+    const ancestorRect = ancestor.getBoundingClientRect();
+    if (clipsOverflow(style.overflowY)) {
+      top = Math.max(top, ancestorRect.top);
+      bottom = Math.min(bottom, ancestorRect.bottom);
+    }
+    if (clipsOverflow(style.overflowX)) {
+      left = Math.max(left, ancestorRect.left);
+      right = Math.min(right, ancestorRect.right);
+    }
+    if (top >= bottom || left >= right) return false;
+  }
+
+  return top < bottom && left < right;
+}
+
+function clipsOverflow(value: string): boolean {
+  return value === "auto" || value === "clip" || value === "hidden" || value === "overlay" || value === "scroll";
 }
 
 function parseInboxEventItem(raw: string): InboxEventItem | null {

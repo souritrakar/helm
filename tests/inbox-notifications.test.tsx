@@ -67,6 +67,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(navigator, "serviceWorker");
 });
@@ -107,6 +108,35 @@ describe("inbox notification stream", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(showNotification).not.toHaveBeenCalled();
     expect(screen.getAllByRole("status")[0]?.textContent).toBe("0");
+  });
+
+  it("announces a card clipped outside its scrollable container", async () => {
+    render(
+      <div data-testid="inbox-scroll">
+        <article data-inbox-item-id="status:clipped">Clipped card</article>
+      </div>,
+    );
+    const container = screen.getByTestId("inbox-scroll");
+    const card = screen.getByText("Clipped card");
+    Object.defineProperty(container, "getBoundingClientRect", {
+      value: () => ({ bottom: 50, left: 0, right: 100, top: 0 }),
+    });
+    Object.defineProperty(card, "getBoundingClientRect", {
+      value: () => ({ bottom: 200, left: 0, right: 100, top: 100 }),
+    });
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => ({
+      overflowX: element === container ? "auto" : "visible",
+      overflowY: element === container ? "auto" : "visible",
+    }) as CSSStyleDeclaration);
+
+    const stream = openStream();
+    act(() => {
+      stream.emit("snapshot.begin");
+      stream.emit("snapshot.end");
+      stream.emit("item.upsert", blocking("status:clipped"));
+    });
+
+    await vi.waitFor(() => expect(screen.getAllByRole("status")[0]?.textContent).toBe("1"));
   });
 
   it("announces an item once when it escalates from attention to blocking", async () => {
