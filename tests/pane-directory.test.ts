@@ -108,6 +108,17 @@ describe("discoverPanes", () => {
     expect(cause).toBeInstanceOf(Error);
     expect((cause as Error).message).toBe("herdr down");
   });
+
+  it("returns Herdr panes when the fleet snapshot rejects", async () => {
+    agentList.mockResolvedValue([{ pane_id: "w1:p1" }]);
+    paneList.mockResolvedValue([pane("w1:p1")]);
+    fleetSnapshot.mockRejectedValue(new Error("snapshot failed"));
+
+    const discovery = await discoverPanes(config);
+
+    expect(discovery.panes.map((entry) => entry.id)).toEqual(["w1:p1"]);
+    expect(discovery.panes[0]?.taskTitle).toBeNull();
+  });
 });
 
 describe("PaneDirectory", () => {
@@ -191,6 +202,89 @@ describe("PaneDirectory", () => {
     });
     expect(updates).toEqual(["idle", "working"]);
     expect(fleetSnapshot).toHaveBeenCalledTimes(1);
+    directory.close();
+  });
+
+  it("publishes Herdr panes before the fleet snapshot settles and enriches titles later", async () => {
+    let finishSnapshot!: (value: { tasks: { id: string; endpoint: { target: string }; backlog: { structured: true; title: string } }[] }) => void;
+    fleetSnapshot.mockReturnValue(
+      new Promise((resolve) => {
+        finishSnapshot = resolve;
+      }),
+    );
+    agentList.mockResolvedValue([{ pane_id: "w1:p1" }]);
+    paneList.mockResolvedValue([pane("w1:p1")]);
+    hangingStream();
+
+    const updates: { id: string; taskTitle: string | null }[] = [];
+    const onError = vi.fn();
+    let published!: () => void;
+    const firstPublish = new Promise<void>((resolve) => {
+      published = resolve;
+    });
+    const directory = new PaneDirectory(
+      config,
+      (discovery) => {
+        updates.push({ id: discovery.panes[0]?.id ?? "", taskTitle: discovery.panes[0]?.taskTitle ?? null });
+        if (updates.length === 1) published();
+      },
+      onError,
+    );
+    void directory.start();
+    await firstPublish;
+    await Promise.resolve();
+
+    expect(updates).toEqual([{ id: "w1:p1", taskTitle: null }]);
+    expect(onError).toHaveBeenCalledWith("fleet snapshot is still running");
+
+    finishSnapshot({
+      tasks: [{ id: "helm-terminal", endpoint: { target: "default:w1:p1" }, backlog: { structured: true, title: "Human title" } }],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(updates).toEqual([
+      { id: "w1:p1", taskTitle: null },
+      { id: "w1:p1", taskTitle: "Human title" },
+    ]);
+    directory.close();
+  });
+
+  it("keeps published panes when the fleet snapshot rejects", async () => {
+    let rejectSnapshot!: (cause: Error) => void;
+    fleetSnapshot.mockReturnValue(
+      new Promise((_, reject) => {
+        rejectSnapshot = reject;
+      }),
+    );
+    agentList.mockResolvedValue([{ pane_id: "w1:p1" }]);
+    paneList.mockResolvedValue([pane("w1:p1")]);
+    hangingStream();
+
+    const updates: string[] = [];
+    const onError = vi.fn();
+    let published!: () => void;
+    const firstPublish = new Promise<void>((resolve) => {
+      published = resolve;
+    });
+    const directory = new PaneDirectory(
+      config,
+      (discovery) => {
+        updates.push(discovery.panes[0]?.id ?? "");
+        if (updates.length === 1) published();
+      },
+      onError,
+    );
+    void directory.start();
+    await firstPublish;
+
+    expect(updates).toEqual(["w1:p1"]);
+    rejectSnapshot(new Error("snapshot failed"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(updates).toEqual(["w1:p1"]);
+    expect(onError).toHaveBeenCalledWith("snapshot failed");
     directory.close();
   });
 });

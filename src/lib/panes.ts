@@ -33,8 +33,8 @@ export async function discoverPanes(cfg: HelmConfig): Promise<PaneDiscovery> {
   const [agents, panes, snapshot] = await Promise.allSettled([agentList(cfg), paneList(cfg), fleetSnapshot(cfg)]);
   if (agents.status === "rejected") throw agents.reason;
   if (panes.status === "rejected") throw panes.reason;
-  if (snapshot.status === "rejected") throw snapshot.reason;
-  return crossReferencePanes(panes.value, new Set(agents.value.map((agent) => agent.pane_id)), snapshot.value.tasks, cfg.fmHome);
+  const tasks = snapshot.status === "fulfilled" ? snapshot.value.tasks : [];
+  return crossReferencePanes(panes.value, new Set(agents.value.map((agent) => agent.pane_id)), tasks, cfg.fmHome);
 }
 
 /**
@@ -106,12 +106,13 @@ export class PaneDirectory {
   #refreshing: Promise<void> | null = null;
   #refreshAgain = false;
   #discovery: PaneDiscovery | null = null;
+  #snapshotTasks: readonly FleetTask[] | null = null;
   #closed = false;
   constructor(readonly cfg: HelmConfig, readonly onUpdate: (value: PaneDiscovery) => void, readonly onError: (message: string) => void) {}
 
   async start(): Promise<void> {
-    await this.refresh();
     this.#subscribePanes();
+    await this.refresh();
   }
 
   close(): void {
@@ -127,9 +128,10 @@ export class PaneDirectory {
   /**
    * Discover once, publish, and re-target the status subscription.
    *
-   * One discovery runs at a time. `fm-fleet-snapshot.sh` may take minutes, so a
-   * flapping agent must coalesce into at most one queued rerun instead of
-   * piling up overlapping snapshot processes.
+   * Herdr agent/pane lists publish as soon as they settle. The fleet snapshot
+   * only enriches task titles and must not gate that first paint; one snapshot
+   * still runs at a time so a flapping agent coalesces into at most one queued
+   * rerun instead of overlapping `fm-fleet-snapshot.sh` processes.
    */
   refresh(): Promise<void> {
     if (this.#refreshing !== null) {
@@ -148,15 +150,76 @@ export class PaneDirectory {
   }
 
   async #discover(): Promise<void> {
+    const snapshotP = fleetSnapshot(this.cfg);
+    let snapshotReady: { tasks: FleetTask[] } | undefined;
+    let snapshotError: unknown;
+    let snapshotDone = false;
+    void snapshotP.then(
+      (snapshot) => {
+        snapshotReady = snapshot;
+        snapshotDone = true;
+      },
+      (cause: unknown) => {
+        snapshotError = cause;
+        snapshotDone = true;
+      },
+    );
+    let agents: Awaited<ReturnType<typeof agentList>>;
+    let panes: Awaited<ReturnType<typeof paneList>>;
     try {
-      const discovery = await discoverPanes(this.cfg);
+      [agents, panes] = await Promise.all([agentList(this.cfg), paneList(this.cfg)]);
+    } catch (cause) {
+      await snapshotP.then(() => undefined, () => undefined);
+      this.#failed(cause);
+      return;
+    }
+    if (this.#closed) {
+      await snapshotP.then(() => undefined, () => undefined);
+      return;
+    }
+    await Promise.resolve();
+    const agentPaneIds = new Set(agents.map((agent) => agent.pane_id));
+    if (snapshotDone && snapshotReady !== undefined) {
+      this.#snapshotTasks = snapshotReady.tasks;
+      this.#publish(crossReferencePanes(panes, agentPaneIds, snapshotReady.tasks, this.cfg.fmHome));
+      return;
+    }
+    this.#publish(crossReferencePanes(panes, agentPaneIds, this.#snapshotTasks ?? [], this.cfg.fmHome));
+    if (!snapshotDone && this.#snapshotTasks === null) {
+      this.onError("fleet snapshot is still running");
+    }
+    if (snapshotDone) {
+      this.#failed(snapshotError);
+      return;
+    }
+    try {
+      const snapshot = await snapshotP;
       if (this.#closed) return;
-      this.#discovery = discovery;
-      this.onUpdate(discovery);
-      this.#subscribeStatuses(discovery.panes);
+      this.#snapshotTasks = snapshot.tasks;
+      this.#publish(this.#retainStatus(crossReferencePanes(panes, agentPaneIds, snapshot.tasks, this.cfg.fmHome)));
     } catch (cause) {
       this.#failed(cause);
     }
+  }
+
+  #publish(discovery: PaneDiscovery): void {
+    if (this.#closed) return;
+    this.#discovery = discovery;
+    this.onUpdate(discovery);
+    this.#subscribeStatuses(discovery.panes);
+  }
+
+  #retainStatus(discovery: PaneDiscovery): PaneDiscovery {
+    if (this.#discovery === null) return discovery;
+    const previous = new Map(this.#discovery.panes.map((pane) => [pane.id, pane.status]));
+    let changed = false;
+    const panes = discovery.panes.map((pane) => {
+      const status = previous.get(pane.id);
+      if (status === undefined || status === pane.status) return pane;
+      changed = true;
+      return { ...pane, status };
+    });
+    return changed ? { ...discovery, panes } : discovery;
   }
 
   #refreshLater(): void {

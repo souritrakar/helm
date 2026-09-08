@@ -6,10 +6,18 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
+
+const { terminalOptions } = vi.hoisted(() => ({
+  terminalOptions: { current: undefined as { disableStdin?: boolean } | undefined },
+}));
+
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
+    constructor(options: { disableStdin?: boolean } = {}) {
+      terminalOptions.current = options;
+    }
     loadAddon(): void {}
     open(): void {}
     write(): void {}
@@ -58,6 +66,7 @@ function deliver(socket: FakeSocket, value: unknown): void {
 
 beforeEach(() => {
   sockets.length = 0;
+  terminalOptions.current = undefined;
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.stubGlobal(
     "ResizeObserver",
@@ -83,6 +92,34 @@ async function liveSocket(): Promise<FakeSocket> {
 }
 
 describe("TerminalPane banners", () => {
+  it("does not treat connecting spawn reasons as failures", async () => {
+    render(<TerminalPane />);
+    const socket = await liveSocket();
+    act(() => {
+      deliver(socket, { type: "terminal.status", status: "connecting", reason: "connected" });
+    });
+    expect(screen.getByText("Connecting")).toBeTruthy();
+    expect(screen.queryByText("connected")).toBeNull();
+    act(() => {
+      deliver(socket, { type: "terminal.status", status: "connecting", reason: "resized" });
+    });
+    expect(screen.queryByText("resized")).toBeNull();
+    act(() => {
+      deliver(socket, { type: "terminal.status", status: "connecting", reason: "pane-switched" });
+    });
+    expect(screen.queryByText("pane-switched")).toBeNull();
+  });
+
+  it("shows a closed-status reason as a warning banner", async () => {
+    render(<TerminalPane />);
+    const socket = await liveSocket();
+    act(() => {
+      deliver(socket, { type: "terminal.status", status: "closed", reason: "observer exited" });
+    });
+    expect(screen.getByText("Disconnected")).toBeTruthy();
+    expect(screen.getByText("observer exited")).toBeTruthy();
+  });
+
   it("keeps a discovery notice across a status-only panes broadcast", async () => {
     render(<TerminalPane />);
     const socket = await liveSocket();
@@ -174,6 +211,14 @@ describe("TerminalPane banners", () => {
       });
     });
     expect(screen.queryByText("Unknown pane")).toBeNull();
+  });
+});
+
+describe("TerminalPane mirror", () => {
+  it("constructs xterm without stdin so the canvas cannot diverge from the observer", async () => {
+    render(<TerminalPane />);
+    await liveSocket();
+    expect(terminalOptions.current?.disableStdin).toBe(true);
   });
 });
 

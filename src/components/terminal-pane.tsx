@@ -46,6 +46,7 @@ export function TerminalPane() {
     const host = hostRef.current;
     if (host === null) return;
     const terminal = new Terminal({
+      disableStdin: true,
       allowTransparency: false,
       cursorBlink: false,
       convertEol: true,
@@ -150,7 +151,7 @@ export function TerminalPane() {
     }
   };
 
-  const banners = [status !== "connected" ? detail : "", notice, sendError].filter((value) => value !== "");
+  const banners = [status === "closed" && detail !== "" ? detail : "", notice, sendError].filter((value) => value !== "");
 
   return <section className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100">
     <header className="flex items-center gap-3 border-b border-zinc-800 px-3 py-2">
