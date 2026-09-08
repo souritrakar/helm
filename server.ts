@@ -17,6 +17,7 @@
  * `pnpm build`). This file is not processed by the Next.js compiler.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import next from "next";
 import { WebSocketServer, WebSocket } from "ws";
@@ -143,6 +144,11 @@ async function main(): Promise<void> {
     })();
   });
   const websocketServer = new WebSocketServer({ noServer: true });
+  const connections = new Set<Socket>();
+  server.on("connection", (connection) => {
+    connections.add(connection);
+    connection.on("close", () => connections.delete(connection));
+  });
   server.on("upgrade", (request, socket, head) => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     if (pathname !== "/api/term") {
@@ -216,6 +222,11 @@ async function main(): Promise<void> {
     // requests. Inbox SSE deliberately keeps one open, so force those
     // connections closed after the listener has stopped accepting new ones.
     server.closeAllConnections();
+    // Upgraded connections (including Next development HMR) are deliberately
+    // excluded from closeAllConnections(), but they also hold server.close()
+    // open. All connections belong to this server, so they are safe to close
+    // after the terminal bridges stop.
+    for (const connection of connections) connection.destroy();
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

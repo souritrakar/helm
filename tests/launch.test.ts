@@ -8,6 +8,7 @@ import { listenerPids } from "@/lib/listener";
 function endpointConfig(port: number): HelmConfig {
   return {
     fmHome: "/fixture/firstmate", fmBinDir: "/fixture/firstmate/bin", fmStateDir: "/fixture/firstmate/state",
+    helmStateDir: "/fixture/helm-state",
     herdrSocketPath: "/fixture/herdr.sock", herdrBin: "herdr",
     bind: "127.0.0.1", port,
   };
