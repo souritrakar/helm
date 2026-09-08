@@ -17,16 +17,15 @@ scripts and `herdr` commands — the same commands the operator would type. It w
 ## Status
 
 Lanes A (foundation and contracts), B (the terminal bridge), C (the inbox core), D (source adapters),
-E (service and launch tooling), F (the UI shell), and G (notifications) are built. Lane C provides
-the store, answered-history, SSE stream, response endpoint, audit log, responder, and adapter
-registry. Lane D registers eight read-only producers: firstmate status decisions, captain holds,
-bearings, captain notes, steering backlog, and process events; plus Herdr agent-state and configured
-output-match events. The shell still renders fixture data: its options and freeform input keep local
-component state and do not yet call the response endpoint. Answered and dismissed cards render
-read-only. Blocking items raise a toast and unread badge; optional desktop alerts fire only while the
-tab is hidden. Notifications observe rendered DOM cards; live-card observation depends on Lane H
-rendering the store into the shell. Lane B adds the terminal bridge: the terminal panel discovers
-available Herdr panes, mirrors the selected pane, and offers one-shot Converse input.
+E (service and launch tooling), F (the UI shell), G (notifications), and H (integration and
+acceptance) are built. Lane C provides the store, answered-history, SSE stream, response endpoint,
+audit log, responder, and adapter registry. Lane D registers eight read-only producers: firstmate
+status decisions, captain holds, bearings, captain notes, steering backlog, and process events; plus
+Herdr agent-state and configured output-match events. The shell renders the live inbox from its SSE
+stream and sends card answers to the response endpoint; answered and dismissed cards stay read-only.
+Blocking items raise a toast and unread badge; optional desktop alerts fire only while the tab is
+hidden. Lane B adds the terminal bridge: the terminal panel discovers available Herdr panes, mirrors
+the selected pane, and offers one-shot Converse input.
 
 ## Requirements
 
@@ -90,9 +89,10 @@ Lane C and Lane G expose these local HTTP endpoints:
 | `GET /api/inbox/visibility` | Mints a helm-session token for presence reports. Local operator gate. |
 | `POST /api/inbox/visibility` | Reports whether the tab is visible and focused (`active`) and which rendered card ids are on screen. Requires the session token (`X-Helm-Visibility-Session`) and a monotonic `sequence`. Presence only — never answers or mutates inbox items. |
 
-Responses are routed conservatively: only typed, non-freeform status decisions use the keyed
-firstmate seam. Captain-held, merge, credential, destructive, irreversible, security-sensitive,
-and all freeform replies are relayed to firstmate instead. Every attempted route is appended to
+Responses are routed conservatively: typed answers to keyed status decisions use the keyed firstmate
+seam, including when the decision has no structured options. Captain-held, merge, credential,
+destructive, irreversible, security-sensitive, and other freeform replies are relayed to firstmate.
+Every attempted route is appended to
 `$HELM_STATE_DIR/actions.jsonl`; answered and dismissed item ids persist in
 `$HELM_STATE_DIR/inbox-history.json` and are never automatically pruned.
 
@@ -147,7 +147,7 @@ repaint.
 | --- | --- |
 | `bin/helm` | Service entrypoint: doctor, build, start, stop, status, logs, install-service. |
 | `systemd/` | User-unit and hourly log-rotate templates, filled by `install-service`. |
-| `src/components/` | The UI shell (`helm-shell.tsx`), the split-size cookie, the read-only inbox notification layer, and the shadcn primitives. |
+| `src/components/` | The UI shell, live inbox SSE and response UI, split-size cookie, notification layer, and shadcn primitives. |
 | `src/lib/types.ts` | `InboxItem`, `InboxAdapter`, `RespondResult` — the contracts every lane imports. |
 | `src/lib/herdr.ts` | The single place any Herdr access lives: terminal observer, pane commands, discovery, `events.subscribe`, capability check, doctor, `herdr notification show`. |
 | `src/lib/fm.ts` | Typed argv wrappers over the firstmate seams, each schema-validated. |
