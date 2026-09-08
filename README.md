@@ -16,16 +16,17 @@ scripts and `herdr` commands — the same commands the operator would type. It w
 
 ## Status
 
-Lanes A (foundation and contracts), C (the inbox core), D (source adapters), E (service and launch
-tooling), F (the UI shell), and G (notifications) are built. Lane C provides the store,
-answered-history, SSE stream, response endpoint, audit log, responder, and adapter registry. Lane D
-registers eight read-only producers: firstmate status decisions, captain holds, bearings, captain
-notes, steering backlog, and process events; plus Herdr agent-state and configured output-match
-events. The shell still renders fixture data: its options and freeform input keep local component
-state and do not yet call the response endpoint. Answered and dismissed cards render read-only.
-Blocking items raise a toast and unread badge; optional desktop alerts fire only while the tab is
-hidden. Notifications observe rendered DOM cards; live-card observation depends on Lane H rendering
-the store into the shell. The terminal bridge is a later lane.
+Lanes A (foundation and contracts), B (the terminal bridge), C (the inbox core), D (source adapters),
+E (service and launch tooling), F (the UI shell), and G (notifications) are built. Lane C provides
+the store, answered-history, SSE stream, response endpoint, audit log, responder, and adapter
+registry. Lane D registers eight read-only producers: firstmate status decisions, captain holds,
+bearings, captain notes, steering backlog, and process events; plus Herdr agent-state and configured
+output-match events. The shell still renders fixture data: its options and freeform input keep local
+component state and do not yet call the response endpoint. Answered and dismissed cards render
+read-only. Blocking items raise a toast and unread badge; optional desktop alerts fire only while the
+tab is hidden. Notifications observe rendered DOM cards; live-card observation depends on Lane H
+rendering the store into the shell. Lane B adds the terminal bridge: the terminal panel discovers
+available Herdr panes, mirrors the selected pane, and offers one-shot Converse input.
 
 ## Requirements
 
@@ -74,8 +75,8 @@ skip would make a green run meaningless. Point `HELM_TEST_FM_HOME` at a checkout
 `HELM_SKIP_FM_CONTRACT=1` to opt out. The opt-out is for local development only; it disables the
 only proof helm's contracts still match the real seams.
 
-helm runs a **custom Node server** (`server.ts`), not `next start`, because a later lane serves a
-long-lived WebSocket carrying a terminal stream, which cannot live in a Next.js route handler.
+helm runs a **custom Node server** (`server.ts`), not `next start`, because it serves the
+long-lived terminal WebSocket, which cannot live in a Next.js route handler.
 
 ## Inbox API
 
@@ -122,6 +123,23 @@ specifier. helm writes its pidfile and rotating logs under `HELM_STATE_DIR`, nev
 `$FM_HOME`. `install-service` enables lingering and an hourly timer that retains five 10 MiB log
 archives; the timer does not need `FM_HOME`. If local policy prevents lingering, the fallback is a
 `crontab @reboot` line: `@reboot /absolute/path/to/helm/bin/helm start`.
+
+## Terminal bridge
+
+The terminal panel is a live, read-only Herdr observer. Choose an available pane from its dropdown;
+task-backed panes show their human-readable task title with the task id as supplementary context.
+The Converse field sends a one-shot single-line text message to the selected pane, rather than
+giving helm take-control or raw keyboard-stream access. A dropped observer can be reconnected from
+the panel.
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /api/term?cols=<cols>&rows=<rows>` | WebSocket terminal mirror. The initial viewport must be 2–500 columns and 2–300 rows; invalid or absent dimensions use 80×24. |
+| `POST /api/term/input` | Sends exactly one JSON `{ "paneId", "text" }` message (single line: no tab, newline, or control characters), or a named `{ "paneId", "key" }` key (`enter`, `escape`, or `c-c`), to a currently discovered pane. |
+
+Both terminal surfaces pass the same local operator gate as inbox mutations. Terminal output is an
+observer stream; a resize, pane switch, or sequence gap replaces that observer and waits for a full
+repaint.
 
 ## Layout
 

@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { describeFailure, runArgv, runArgvOrThrow, succeeded } from "@/lib/exec";
+import { describeFailure, runArgv, runArgvOrThrow, streamArgv, succeeded } from "@/lib/exec";
 
 /** Larger than a pipe buffer, so the write cannot complete before the exit. */
 const UNDRAINABLE_INPUT = "x".repeat(1024 * 1024);
@@ -52,5 +52,36 @@ describe("runArgv", () => {
     await expect(runArgvOrThrow("sh", ["-c", "exit 0"], { input: UNDRAINABLE_INPUT })).rejects.toThrow(
       /stdin/,
     );
+  });
+});
+
+describe("streamArgv", () => {
+  it("streams stdout from a long-lived child and kill() stops it", async () => {
+    const child = streamArgv(process.execPath, [
+      "-e",
+      "process.stdout.write('ready\\n'); setTimeout(() => {}, 30_000);",
+    ]);
+
+    const first = await new Promise<string>((resolve, reject) => {
+      child.stdout.setEncoding("utf8");
+      child.stdout.once("data", (chunk: string) => resolve(chunk));
+      child.stdout.once("error", reject);
+    });
+    child.kill();
+    const exit = await child.exit;
+
+    expect(first).toContain("ready");
+    expect(child.argv).toEqual([process.execPath, "-e", "process.stdout.write('ready\\n'); setTimeout(() => {}, 30_000);"]);
+    expect(exit.signal).toBe("SIGTERM");
+    expect(exit.exitCode).toBeNull();
+    expect(exit.error).toBeNull();
+  });
+
+  it("reports a spawn failure on exit rather than throwing", async () => {
+    const child = streamArgv("helm-no-such-command", ["terminal", "session", "observe"]);
+    const exit = await child.exit;
+
+    expect(exit.exitCode).toBeNull();
+    expect(exit.error).toMatch(/helm-no-such-command/);
   });
 });

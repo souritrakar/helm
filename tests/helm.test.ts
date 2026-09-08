@@ -174,7 +174,7 @@ describe("helm launcher", () => {
     const state = join(directory, "state");
     mkdirSync(state);
     writeFileSync(join(state, "helm.log"), "keep\n");
-    const env = { ...process.env, HELM_STATE_DIR: state };
+    const env: NodeJS.ProcessEnv = { ...process.env, HELM_STATE_DIR: state };
     delete env.FM_HOME;
     const result = spawnSync(join(root, "bin/helm"), ["rotate-logs"], { encoding: "utf8", env });
 
@@ -189,7 +189,7 @@ describe("helm launcher", () => {
     mkdirSync(state);
     const payload = "keep-me-rotated\n";
     writeFileSync(join(state, "helm.log"), payload.repeat(Math.ceil((10 * 1024 * 1024) / payload.length)));
-    const env = { ...process.env, HELM_STATE_DIR: state };
+    const env: NodeJS.ProcessEnv = { ...process.env, HELM_STATE_DIR: state };
     delete env.FM_HOME;
     const result = spawnSync(join(root, "bin/helm"), ["rotate-logs"], { encoding: "utf8", env });
 

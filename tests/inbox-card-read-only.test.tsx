@@ -8,6 +8,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
+vi.mock("@/components/terminal-pane", () => ({
+  TerminalPane: () => <div aria-label="Read-only terminal mirror" />,
+}));
+
 import { HelmShell } from "@/components/helm-shell";
 
 /** jsdom ships neither of these, and the shell reads both on mount. */
@@ -51,6 +55,11 @@ afterEach(() => {
 });
 
 describe("closed inbox cards", () => {
+  it("keeps the terminal panel alongside the inbox", () => {
+    expect(screen.getByLabelText("Read-only terminal mirror")).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Inbox" })).toBeDefined();
+  });
+
   it.each([
     ["answered", "UI shell review is complete", "Answered. This card is read-only."],
     ["dismissed", "Handoff note from the captain", "Dismissed. This card is read-only."],

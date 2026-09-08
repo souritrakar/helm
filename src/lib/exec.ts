@@ -1,12 +1,14 @@
 /**
  * Argv-only process execution.
  *
- * Every external command helm runs goes through this module. `execFile` is used
- * with the default `shell: false`, so the argument vector reaches the kernel
- * unchanged and adapter-supplied text can never be re-interpreted as shell
- * syntax (SPEC R5, AC 19). No helper here accepts a command string.
+ * Every external command helm runs goes through this module. One-shot work uses
+ * `execFile`; long-lived streams use `spawn`. Both keep the default
+ * `shell: false`, so the argument vector reaches the kernel unchanged and
+ * adapter-supplied text can never be re-interpreted as shell syntax (SPEC R5,
+ * AC 19). No helper here accepts a command string.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { PassThrough, type Readable } from "node:stream";
 
 /** Result of one argv exec. Captures everything the audit log needs. */
 export interface ExecResult {
@@ -31,6 +33,34 @@ export interface ExecResult {
   readonly stdinError: string | null;
 }
 
+export interface StreamedProcessExit {
+  /** Process exit code, or `null` when the process was signalled or never started. */
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  /**
+   * Spawn-level failure (command not found). `null` when the process ran to
+   * completion, whatever its exit code.
+   */
+  readonly error: string | null;
+}
+
+/**
+ * A long-lived argv child. `stdout`/`stderr` stay open until the process
+ * exits; `kill` is the only way the caller stops it.
+ */
+export interface StreamedProcess {
+  readonly argv: readonly string[];
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+  readonly exit: Promise<StreamedProcessExit>;
+  kill(signal?: NodeJS.Signals): void;
+}
+
+export interface StreamArgvOptions {
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
 export interface RunArgvOptions {
   /** Milliseconds before the child is killed. Default 30000. */
   readonly timeoutMs?: number;
@@ -44,6 +74,49 @@ export interface RunArgvOptions {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_BUFFER = 32 * 1024 * 1024;
+
+/**
+ * Spawn `file` with `args` and keep its output streams. Never throws: a failed
+ * spawn resolves {@link StreamedProcess.exit} with `error` set, the same way
+ * {@link runArgv} reports ENOENT inside {@link ExecResult}.
+ */
+export function streamArgv(
+  file: string,
+  args: readonly string[],
+  options: StreamArgvOptions = {},
+): StreamedProcess {
+  const argv = [file, ...args];
+  const child = spawn(file, [...args], {
+    stdio: ["ignore", "pipe", "pipe"],
+    cwd: options.cwd,
+    env: options.env,
+  });
+  const stdout = child.stdout ?? endedReadable();
+  const stderr = child.stderr ?? endedReadable();
+  const exit = new Promise<StreamedProcessExit>((resolve) => {
+    child.on("error", (cause: Error) => {
+      resolve({ exitCode: null, signal: null, error: `${argv[0]}: ${cause.message}` });
+    });
+    child.on("close", (code, signal) => {
+      resolve({ exitCode: code, signal, error: null });
+    });
+  });
+  return {
+    argv,
+    stdout,
+    stderr,
+    exit,
+    kill: (signal = "SIGTERM") => {
+      child.kill(signal);
+    },
+  };
+}
+
+function endedReadable(): Readable {
+  const stream = new PassThrough();
+  stream.end();
+  return stream;
+}
 
 /** Thrown by {@link runArgvOrThrow} when a command fails. Carries the full result. */
 export class ExecFailure extends Error {
