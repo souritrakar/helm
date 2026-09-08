@@ -28,6 +28,7 @@ export class TerminalBridge {
   #generation = 0;
   #lastSeq: number | null = null;
   #closed = false;
+  #resizeDebounce: NodeJS.Timeout | null = null;
   readonly #client: TerminalClient;
   readonly #observe: (target: string, viewport: TerminalViewport) => TerminalObservation;
 
@@ -45,7 +46,11 @@ export class TerminalBridge {
   resize(viewport: TerminalViewport): void {
     if (this.#closed || sameViewport(this.#viewport, viewport)) return;
     this.#viewport = viewport;
-    this.#respawn("resized");
+    if (this.#resizeDebounce !== null) clearTimeout(this.#resizeDebounce);
+    this.#resizeDebounce = setTimeout(() => {
+      this.#resizeDebounce = null;
+      this.#respawn("resized");
+    }, 250);
   }
 
   select(target: string): void {
@@ -60,12 +65,14 @@ export class TerminalBridge {
 
   close(): void {
     this.#closed = true;
+    this.#clearResizeDebounce();
     this.#generation += 1;
     this.#observation?.close();
     this.#observation = null;
   }
 
   #respawn(reason: string): void {
+    this.#clearResizeDebounce();
     this.#observation?.close();
     this.#observation = null;
     this.#spawn(reason);
@@ -110,6 +117,11 @@ export class TerminalBridge {
 
   #ended(reason: string): void {
     this.#client.send(JSON.stringify({ type: "terminal.status", status: "closed", reason, reconnect: true }));
+  }
+
+  #clearResizeDebounce(): void {
+    if (this.#resizeDebounce !== null) clearTimeout(this.#resizeDebounce);
+    this.#resizeDebounce = null;
   }
 }
 

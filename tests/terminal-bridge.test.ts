@@ -36,12 +36,23 @@ describe("TerminalBridge", () => {
     bridge.close();
   });
 
-  it("replaces the fixed viewport observer on resize", async () => {
+  it("debounces resize observer replacement to the final viewport", () => {
+    vi.useFakeTimers();
     const observe = vi.fn().mockReturnValue(observation([]));
     const bridge = new TerminalBridge({ cfg: config, target: "w1:p1", viewport: { cols: 80, rows: 24 }, client: { send: () => undefined }, observe });
-    bridge.start(); bridge.resize({ cols: 100, rows: 40 });
-    expect(observe).toHaveBeenNthCalledWith(1, "w1:p1", { cols: 80, rows: 24 });
-    expect(observe).toHaveBeenNthCalledWith(2, "w1:p1", { cols: 100, rows: 40 });
-    bridge.close();
+    try {
+      bridge.start();
+      bridge.resize({ cols: 100, rows: 40 });
+      bridge.resize({ cols: 120, rows: 50 });
+      bridge.resize({ cols: 140, rows: 60 });
+      expect(observe).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(249);
+      expect(observe).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1);
+      expect(observe).toHaveBeenNthCalledWith(2, "w1:p1", { cols: 140, rows: 60 });
+    } finally {
+      bridge.close();
+      vi.useRealTimers();
+    }
   });
 });
