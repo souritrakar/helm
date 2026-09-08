@@ -111,13 +111,14 @@ bin/helm install-service
 
 `doctor` fails for an unusable `FM_HOME`, Node or pnpm below the required versions, a missing or
 too-old Herdr, a control socket that is not a running Herdr server at protocol ≥ 20, and a
-configured port held by anyone other than this helm instance. When helm is already running, it
-passes only if that instance's process group owns the configured bind:port.
+configured bind:port held by anyone other than this helm instance. When helm is already running, it
+passes only if that instance's process group owns that endpoint.
 
 `install-service` requires a validated `FM_HOME` (it never guesses `~/firstmate`) and captures it
 with the validated `HELM_BIND` and `HELM_PORT` into a user unit with `Restart=always` and start-limit
-backoff; rerun it after changing any of them. Paths that contain systemd unit syntax are rejected
-rather than escaped. helm writes its pidfile and rotating logs under `HELM_STATE_DIR`, never under
+backoff; rerun it after changing any of them. Paths that contain quotes, dollars, or other systemd
+unit syntax are rejected rather than escaped; `%` is doubled so systemd does not treat it as a
+specifier. helm writes its pidfile and rotating logs under `HELM_STATE_DIR`, never under
 `$FM_HOME`. `install-service` enables lingering and an hourly timer that retains five 10 MiB log
 archives; the timer does not need `FM_HOME`. If local policy prevents lingering, the fallback is a
 `crontab @reboot` line: `@reboot /absolute/path/to/helm/bin/helm start`.

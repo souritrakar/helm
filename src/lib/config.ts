@@ -148,11 +148,11 @@ export function loadHelmStateDir(env: ConfigEnv = process.env): string {
 /**
  * `$HELM_STATE_DIR`, or `$XDG_STATE_HOME/helm`, or `$HOME/.local/state/helm`.
  *
- * The directory need not exist yet — the store and audit log create it on first
- * write. An explicit relative path is rejected so a mis-set variable cannot
- * silently write under the process cwd. A path equal to or under `fmHome` is
- * also rejected so answered-history and the audit log can never write under
- * `$FM_HOME` (AGENTS.md hard rule 1).
+ * The directory need not exist yet — the launcher, store, and audit log create
+ * it on first write. An explicit relative path is rejected so a mis-set variable
+ * cannot silently write under the process cwd. A path equal to or under `fmHome`
+ * is also rejected so the pidfile, logs, answered-history, and audit log can
+ * never write under `$FM_HOME` (AGENTS.md hard rule 1).
  */
 function resolveHelmStateDir(env: ConfigEnv, fmHome: string | undefined): string {
   const explicit = nonEmpty("HELM_STATE_DIR", env.HELM_STATE_DIR);

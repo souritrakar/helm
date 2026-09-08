@@ -79,9 +79,11 @@ These are not style preferences. Each one protects something that fails silently
   at that protocol (a connectable socket is not enough).
 - **Service launcher is `bin/helm`.** With a live pidfile, doctor treats the configured
   bind:port as healthy only when a listener on that exact bind belongs to that process group
-  (a free port or a foreign listener is a failure). `install-service` rejects quotes, dollars,
-  and other unit syntax in templated paths rather than escaping them. `rotate-logs` validates
-  `HELM_STATE_DIR` only (no `FM_HOME`) so the hourly timer can run.
+  (a free port or a foreign listener is a failure). `start` launches with argv-only
+  `setsid pnpm --dir` (no shell string). `install-service` rejects quotes, dollars, and other
+  unit syntax in templated paths rather than escaping them; `%` is doubled so systemd does not
+  treat it as a specifier. `rotate-logs` validates `HELM_STATE_DIR` only (no `FM_HOME`) so the
+  hourly timer can run.
 - Herdr names events asymmetrically: you **subscribe** with dots (`pane.created`) but events
   **arrive** underscored (`pane_created`) — except `pane.agent_status_changed`,
   `pane.output_matched`, and `pane.scroll_changed`, which keep their dotted name. Confirm shapes

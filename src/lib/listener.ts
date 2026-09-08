@@ -1,10 +1,11 @@
 /**
- * Which process holds a listening TCP port, answered by the kernel through procfs.
+ * Which process holds the configured listen endpoint, answered by the kernel
+ * through procfs.
  *
  * A live pidfile proves that a process exists, not that it bound the configured
- * endpoint, so doctor resolves the listener itself before calling a busy port
- * healthy. Linux only, like the rest of the launcher; an unreadable procfs
- * yields "unknown", which the caller reports rather than assumes away.
+ * bind:port, so doctor resolves the listener itself before calling a busy
+ * endpoint healthy. Linux only, like the rest of the launcher; an unreadable
+ * procfs yields "unknown", which the caller reports rather than assumes away.
  */
 import { lookup } from "node:dns/promises";
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
