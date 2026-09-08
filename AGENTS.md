@@ -92,6 +92,9 @@ These are not style preferences. Each one protects something that fails silently
   `pane.output_matched`, and `pane.scroll_changed`, which keep their dotted name. Confirm shapes
   with `herdr api schema --json`, not from memory.
 - Bind address and port are config, not constants, so phase-2 remote access is a config swap.
+- Operator and contributor docs: `README.md`, `docs/architecture.md` (pieces
+  and boundaries), `docs/adapters.md` (SPEC §5.4 three tiers),
+  `docs/operations.md` (`bin/helm` and systemd).
 
 ## Maintaining this file
 
