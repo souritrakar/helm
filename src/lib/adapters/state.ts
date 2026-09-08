@@ -42,7 +42,7 @@ function statusDecisions(cfg: HelmConfig): InboxAdapter {
   return pollingAdapter("status-decisions", cfg.fmStateDir, async () => (await scanOpenDecisions(cfg)).map((d) => open("status-decisions", `${d.taskId}:${d.key}`, {
     kind: "status-decision", urgency: "blocking", taskId: d.taskId,
     title: d.verb === "blocked" ? `Blocked: ${d.taskId}` : `Decision needed: ${d.taskId}`, detail: d.note,
-    options: [], allowFreeform: false, respond: { channel: "resolve-key", target: d.taskId, key: d.key }, evidence: [{ path: statePath(cfg, `${d.taskId}.status`) }],
+    options: [], allowFreeform: true, respond: { channel: "resolve-key", target: d.taskId, key: d.key }, evidence: [{ path: statePath(cfg, `${d.taskId}.status`) }],
   })));
 }
 

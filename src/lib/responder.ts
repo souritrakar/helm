@@ -72,17 +72,15 @@ const ALWAYS_RELAY_KINDS: ReadonlySet<InboxItemKind> = new Set([
 /**
  * Pick the channel for an item under D-C.
  *
- * Only typed keyed status decisions may use `resolve-key`. All other actionable
- * items relay; informational cards remain non-actionable.
+ * Only typed keyed status decisions may use `resolve-key`. The fold does not
+ * emit structured options, so the operator types the answer; that typed answer
+ * is still the keyed decision, not a freeform instruction. All other
+ * actionable items relay; informational cards remain non-actionable.
  */
 export function routeChannel(item: InboxItem): RespondChannel {
   if (ALWAYS_RELAY_KINDS.has(item.kind)) return "relay";
   if (item.respond.channel === "none") return "none";
-  if (
-    item.kind === "status-decision" &&
-    !item.allowFreeform &&
-    item.respond.channel === "resolve-key"
-  ) {
+  if (item.kind === "status-decision" && item.respond.channel === "resolve-key") {
     return "resolve-key";
   }
   return "relay";

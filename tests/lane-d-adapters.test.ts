@@ -64,7 +64,7 @@ describe("state record adapters", () => {
     await start(stateAdapter("status-decisions"));
     expect(emitted.at(-1)).toMatchObject([{
       id: "status-decisions:task-7:approve", kind: "status-decision", urgency: "blocking", taskId: "task-7",
-      title: "Blocked: task-7", detail: "Needs a human decision",
+      title: "Blocked: task-7", detail: "Needs a human decision", allowFreeform: true,
       respond: { channel: "resolve-key", target: "task-7", key: "approve" },
     }]);
   });
@@ -234,5 +234,33 @@ describe("agent-state adapter", () => {
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
     await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
     expect(emitted.at(-1)).toEqual([]);
+  });
+
+  it("omits a pane_not_found id from the next subscribe instead of retrying it", async () => {
+    const herdr = join(root, "herdr-missing");
+    writeFileSync(herdr, `#!/bin/sh\nprintf '%s\\n' '{"id":"1","result":{"type":"agent_list","agents":[{"pane_id":"w9:p1","workspace_id":"w9","tab_id":"t1","terminal_id":"term-x","agent_status":"working","focused":false},{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"t1","terminal_id":"term-1","agent_status":"working","focused":false}]}}'\n`);
+    chmodSync(herdr, 0o755);
+    config = { ...config, herdrBin: herdr };
+    const requests: unknown[] = [];
+    server = createServer((socket) => {
+      connections.add(socket);
+      socket.once("data", (raw) => {
+        const request = JSON.parse(raw.toString()) as { params?: { subscriptions?: Array<{ pane_id?: string }> } };
+        requests.push(request);
+        const paneIds = request.params?.subscriptions?.map((entry) => entry.pane_id).filter((id): id is string => id !== undefined) ?? [];
+        if (paneIds.includes("w9:p1")) {
+          socket.write('{"id":"helm","error":{"code":"pane_not_found","message":"pane w9:p1 not found"}}\n');
+          return;
+        }
+        socket.write('{"result":{"type":"subscription_started"}}\n');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    await vi.waitUntil(() => requests.some((request) => {
+      const paneIds = (request as { params?: { subscriptions?: Array<{ pane_id?: string }> } }).params?.subscriptions?.map((entry) => entry.pane_id) ?? [];
+      return paneIds.includes("w1:p1") && !paneIds.includes("w9:p1");
+    }));
+    expect(requests.length).toBeLessThan(6);
   });
 });

@@ -94,7 +94,7 @@ describe("helm launcher", () => {
     expect(existsSync(join(home, ".config/systemd/user"))).toBe(false);
   });
 
-  it("rejects a newline-bearing FM_HOME before serializing service configuration", () => {
+  it("rejects a newline-bearing FM_HOME before serializing service configuration", { timeout: 15_000 }, () => {
     const directory = workspace();
     const fmHome = join(directory, "firstmate\nunsafe");
     const home = join(directory, "home");

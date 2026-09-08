@@ -13,6 +13,7 @@ function agentState(config: HelmConfig): InboxAdapter {
     id: "agent-state",
     async start(ctx) {
       const blocked = new Map<string, InboxItem>();
+      const tombstoned = new Set<string>();
       const agents = await agentList(config);
       const panes = new Set(agents.map((agent) => agent.pane_id));
       for (const agent of agents.filter((candidate) => candidate.agent_status === "blocked")) {
@@ -41,7 +42,7 @@ function agentState(config: HelmConfig): InboxAdapter {
         const stream = subscribeEvents(config, [
           { type: "pane.created" },
           { type: "pane.closed" },
-          ...[...panes].map((paneId) => ({ type: "pane.agent_status_changed" as const, pane_id: paneId })),
+          ...[...panes].filter((paneId) => !tombstoned.has(paneId)).map((paneId) => ({ type: "pane.agent_status_changed" as const, pane_id: paneId })),
         ], (event) => {
           queueUpdate(async () => {
             await eventBarrier;
@@ -53,6 +54,7 @@ function agentState(config: HelmConfig): InboxAdapter {
               ctx.emit([...blocked.values()]);
             } else if (event.event === "pane_created") {
               const pane = event.data.pane;
+              if (tombstoned.has(pane.pane_id)) return;
               panes.add(pane.pane_id);
               if (pane.agent_status === "blocked") blocked.set(pane.pane_id, blockedItem(config, pane.pane_id, pane.terminal_title ?? pane.agent));
               else blocked.delete(pane.pane_id);
@@ -68,6 +70,9 @@ function agentState(config: HelmConfig): InboxAdapter {
         });
         current = stream;
         reportStreamFailure("agent-state", stream);
+        void stream.closed.then(() => undefined, (cause: unknown) => {
+          if (forgetMissingPane(cause)) queueSubscription();
+        });
         await stream.ready;
         if (stopped) {
           stream.close();
@@ -86,17 +91,42 @@ function agentState(config: HelmConfig): InboxAdapter {
         panes.clear();
         blocked.clear();
         for (const agent of liveAgents) {
+          if (tombstoned.has(agent.pane_id)) continue;
           panes.add(agent.pane_id);
           if (agent.agent_status === "blocked") blocked.set(agent.pane_id, blockedItem(config, agent.pane_id, agent.terminal_title ?? agent.agent));
         }
         ctx.emit([...blocked.values()]);
       };
+      const forgetMissingPane = (cause: unknown): boolean => {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        const missing = /pane ([^\s]+) not found/.exec(message);
+        if (missing === null || missing[1] === undefined) return false;
+        tombstoned.add(missing[1]);
+        panes.delete(missing[1]);
+        blocked.delete(missing[1]);
+        ctx.emit([...blocked.values()]);
+        return true;
+      };
+      let debounce: ReturnType<typeof setTimeout> | undefined;
       function queueSubscription(): void {
-        scheduled = scheduled.catch(() => undefined).then(() => subscribe(true)).catch((cause: unknown) => console.error("agent-state: subscription failed", cause));
+        if (debounce !== undefined) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          debounce = undefined;
+          scheduled = scheduled.catch(() => undefined).then(() => subscribe(true)).catch((cause: unknown) => {
+            console.error("agent-state: subscription failed", cause);
+            if (forgetMissingPane(cause)) queueSubscription();
+          });
+        }, 50);
       }
 
-      await subscribe(true);
-      return { [Symbol.dispose]() { stopped = true; generation++; current?.close(); } };
+      try {
+        await subscribe(true);
+      } catch (cause) {
+        console.error("agent-state: subscription failed", cause);
+        if (!forgetMissingPane(cause)) throw cause;
+        await subscribe(true);
+      }
+      return { [Symbol.dispose]() { stopped = true; generation++; if (debounce !== undefined) clearTimeout(debounce); current?.close(); } };
     },
   };
 }
