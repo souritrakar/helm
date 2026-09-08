@@ -7,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { ConfigError, DEFAULT_BIND, DEFAULT_PORT, loadConfig } from "@/lib/config";
+import { ConfigError, DEFAULT_BIND, DEFAULT_PORT, loadConfig, loadEndpoint, loadHelmStateDir } from "@/lib/config";
 
 let home: string;
 /** An existing, readable directory that is NOT laid out like an FM_HOME. */
@@ -137,5 +137,36 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ FM_HOME: home, HELM_STATE_DIR: alias })).toThrow(
       /must not be equal to or under FM_HOME/,
     );
+  });
+});
+
+describe("loadHelmStateDir", () => {
+  it("resolves an explicit state directory without FM_HOME", () => {
+    expect(loadHelmStateDir({ HELM_STATE_DIR: "/var/lib/helm" })).toBe("/var/lib/helm");
+  });
+
+  it("rejects a relative state directory without requiring FM_HOME", () => {
+    expect(() => loadHelmStateDir({ HELM_STATE_DIR: "helm-state" })).toThrow(ConfigError);
+    expect(() => loadHelmStateDir({ HELM_STATE_DIR: "helm-state" })).toThrow(
+      /HELM_STATE_DIR must be an absolute path/,
+    );
+  });
+
+  it("rejects a state directory under FM_HOME when that home is present", () => {
+    expect(() => loadHelmStateDir({ FM_HOME: home, HELM_STATE_DIR: join(home, "helm-state") })).toThrow(
+      /must not be equal to or under FM_HOME/,
+    );
+  });
+});
+
+describe("loadEndpoint", () => {
+  it("applies the same defaults loadConfig does, without needing FM_HOME", () => {
+    expect(loadEndpoint({})).toEqual({ bind: DEFAULT_BIND, port: DEFAULT_PORT });
+    expect(loadConfig({ FM_HOME: home })).toMatchObject(loadEndpoint({}));
+  });
+
+  it("rejects a port the server could never bind", () => {
+    expect(() => loadEndpoint({ HELM_PORT: "abc" })).toThrow(ConfigError);
+    expect(() => loadEndpoint({ HELM_PORT: "70000" })).toThrow(ConfigError);
   });
 });

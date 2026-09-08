@@ -2,6 +2,7 @@
  * Contract tests for the Herdr wire shapes, over recorded protocol-20 records.
  * Hermetic: no Herdr server is contacted.
  */
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
@@ -409,9 +410,17 @@ describe("herdrDoctor", () => {
     };
   }
 
-  /** Bind a real unix socket where the config expects the control socket. */
-  async function listen(cfg: HelmConfig): Promise<void> {
-    server = createServer();
+  async function listen(cfg: HelmConfig, protocol = HERDR_MIN_PROTOCOL): Promise<void> {
+    server = createServer((connection) => {
+      connection.setEncoding("utf8");
+      connection.once("data", (chunk: string) => {
+        const request = JSON.parse(chunk.trim()) as { id: string };
+        connection.end(`${JSON.stringify({
+          id: request.id,
+          result: { type: "session_snapshot", snapshot: { protocol } },
+        })}\n`);
+      });
+    });
     await new Promise<void>((resolve) => server!.listen(cfg.herdrSocketPath, resolve));
   }
 
@@ -425,7 +434,7 @@ describe("herdrDoctor", () => {
     rmSync(binDir, { recursive: true, force: true });
   });
 
-  it("reports ok when herdr speaks the minimum protocol and the socket is present", async () => {
+  it("reports ok when the Herdr socket acknowledges a session snapshot", async () => {
     const cfg = stubHerdr(JSON.stringify({ protocol: HERDR_MIN_PROTOCOL }));
     await listen(cfg);
 
@@ -435,6 +444,7 @@ describe("herdrDoctor", () => {
     expect(doctor.ok).toBe(true);
     expect(doctor.protocol).toBe(HERDR_MIN_PROTOCOL);
     expect(doctor.socketPresent).toBe(true);
+    expect(doctor.socketReachable).toBe(true);
   });
 
   it("reports a problem naming the protocol when herdr is older than the minimum", async () => {
@@ -462,6 +472,43 @@ describe("herdrDoctor", () => {
     expect(doctor.problems).toEqual([
       "herdr api schema --json did not report a numeric protocol",
     ]);
+  });
+
+  it("reports a problem when the socket outlives the Herdr server that owned it", async () => {
+    const cfg = stubHerdr(JSON.stringify({ protocol: HERDR_MIN_PROTOCOL }));
+    // SIGKILL leaves the socket inode behind, so a stat-only check calls this healthy.
+    const listener = spawn(process.execPath, [
+      "-e",
+      'require("node:net").createServer().listen(process.argv[1], () => console.log("ready"));',
+      cfg.herdrSocketPath,
+    ]);
+    await new Promise<void>((resolve) => listener.stdout.once("data", () => resolve()));
+    listener.kill("SIGKILL");
+    await new Promise<void>((resolve) => listener.once("exit", () => resolve()));
+
+    const doctor = await herdrDoctor(cfg);
+
+    expect(doctor.ok).toBe(false);
+    expect(doctor.socketPresent).toBe(true);
+    expect(doctor.socketReachable).toBe(false);
+    expect(doctor.problems).toHaveLength(1);
+    expect(doctor.problems[0]).toContain(cfg.herdrSocketPath);
+  });
+
+  it("rejects a non-Herdr listener at the configured socket", async () => {
+    const cfg = stubHerdr(JSON.stringify({ protocol: HERDR_MIN_PROTOCOL }));
+    server = createServer((connection) => {
+      connection.once("data", () => connection.end('{"result":{"type":"ok"}}\n'));
+    });
+    await new Promise<void>((resolve) => server!.listen(cfg.herdrSocketPath, resolve));
+
+    const doctor = await herdrDoctor(cfg);
+
+    expect(doctor.ok).toBe(false);
+    expect(doctor.socketReachable).toBe(false);
+    expect(doctor.problems).toContain(
+      `Herdr control socket at ${cfg.herdrSocketPath} did not complete a Herdr health check; is the Herdr server running? (session.snapshot did not return a Herdr session snapshot)`,
+    );
   });
 
   it("reports a problem when the control socket is absent", async () => {

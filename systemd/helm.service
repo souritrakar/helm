@@ -1,0 +1,24 @@
+[Unit]
+Description=helm browser control and human inbox
+After=default.target
+# Restart=always would otherwise retry forever while a dependency such as Herdr
+# is down, because each failing start outlasts the systemd default interval.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=@HELM_ROOT@
+Environment="FM_HOME=@FM_HOME@"
+Environment="HELM_STATE_DIR=@HELM_STATE_DIR@"
+# Captured from the validated configuration when bin/helm install-service ran.
+# Rerun bin/helm install-service after changing HELM_BIND or HELM_PORT.
+Environment="HELM_BIND=@HELM_BIND@"
+Environment="HELM_PORT=@HELM_PORT@"
+Environment="HELM_FOREGROUND=1"
+ExecStart="@HELM_ROOT@/bin/helm" start
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

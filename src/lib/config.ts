@@ -29,8 +29,9 @@ export interface HelmConfig {
   /**
    * helm's own writable state (`~/.local/state/helm` by default).
    *
-   * Answered-history and the audit log live here. This is never under
-   * `$FM_HOME` — helm must not write there (AGENTS.md hard rule 1).
+   * The pidfile, rotating service logs, answered-history, and the audit log
+   * live here. This is never under `$FM_HOME` — helm must not write there
+   * (AGENTS.md hard rule 1).
    */
   readonly helmStateDir: string;
   /** Herdr control socket. Liveness is a doctor concern, not a load concern. */
@@ -63,6 +64,11 @@ const outputMatchesSchema = z.array(z.object({
   urgency: z.enum(["blocking", "attention", "fyi"]).optional(),
 }));
 
+/** The listen endpoint on its own, for callers that need no FM_HOME. */
+export interface HelmEndpoint {
+  readonly port: number;
+  readonly bind: string;
+}
 export const DEFAULT_PORT = 7333;
 export const DEFAULT_BIND = "127.0.0.1";
 export const DEFAULT_HERDR_BIN = "herdr";
@@ -87,10 +93,25 @@ export function loadConfig(env: ConfigEnv = process.env): HelmConfig {
     helmStateDir: resolveHelmStateDir(env, fmHome),
     herdrSocketPath: resolveHerdrSocketPath(env),
     herdrBin: nonEmpty("HERDR_BIN", env.HERDR_BIN) ?? DEFAULT_HERDR_BIN,
-    port: parsePort("HELM_PORT", env.HELM_PORT),
-    bind: parseBind("HELM_BIND", env.HELM_BIND),
+    ...loadEndpoint(env),
     outputMatches: parseOutputMatches(env.HELM_OUTPUT_MATCHES),
     captainPane: nonEmpty("HELM_CAPTAIN_PANE", env.HELM_CAPTAIN_PANE),
+  };
+}
+
+/**
+ * Read and validate just the listen endpoint from `env`.
+ *
+ * The launcher needs the endpoint for its status line, its readiness probe, and
+ * the unit file it generates, in situations where FM_HOME may not be usable.
+ * Sharing this with {@link loadConfig} keeps one owner of the defaults.
+ *
+ * @throws {ConfigError} on any invalid input.
+ */
+export function loadEndpoint(env: ConfigEnv = process.env): HelmEndpoint {
+  return {
+    port: parsePort("HELM_PORT", env.HELM_PORT),
+    bind: parseBind("HELM_BIND", env.HELM_BIND),
   };
 }
 
@@ -111,26 +132,42 @@ function parseOutputMatches(raw: string | undefined): readonly OutputMatchConfig
 }
 
 /**
+ * Resolve helm's writable state directory without requiring FM_HOME.
+ *
+ * Relative paths are rejected. When FM_HOME is an absolute path, a state
+ * directory equal to or under it is rejected so helm never writes there.
+ */
+export function loadHelmStateDir(env: ConfigEnv = process.env): string {
+  const fmHome = env.FM_HOME?.trim();
+  return resolveHelmStateDir(
+    env,
+    fmHome !== undefined && fmHome !== "" && isAbsolute(fmHome) ? fmHome : undefined,
+  );
+}
+
+/**
  * `$HELM_STATE_DIR`, or `$XDG_STATE_HOME/helm`, or `$HOME/.local/state/helm`.
  *
- * The directory need not exist yet — the store and audit log create it on first
- * write. An explicit relative path is rejected so a mis-set variable cannot
- * silently write under the process cwd. A path equal to or under `fmHome` is
- * also rejected so answered-history and the audit log can never write under
- * `$FM_HOME` (AGENTS.md hard rule 1).
+ * The directory need not exist yet — the launcher, store, and audit log create
+ * it on first write. An explicit relative path is rejected so a mis-set variable
+ * cannot silently write under the process cwd. A path equal to or under `fmHome`
+ * is also rejected so the pidfile, logs, answered-history, and audit log can
+ * never write under `$FM_HOME` (AGENTS.md hard rule 1).
  */
-function resolveHelmStateDir(env: ConfigEnv, fmHome: string): string {
+function resolveHelmStateDir(env: ConfigEnv, fmHome: string | undefined): string {
   const explicit = nonEmpty("HELM_STATE_DIR", env.HELM_STATE_DIR);
   const value = explicit ?? join(stateHome(env), "helm");
   if (!isAbsolute(value)) {
     throw new ConfigError(`HELM_STATE_DIR must be an absolute path, got ${JSON.stringify(value)}`);
   }
-  const resolvedFmHome = realpathSync(fmHome);
-  const resolvedStateDir = resolveExistingPath(value);
-  if (isPathInsideOrEqual(resolvedStateDir, resolvedFmHome)) {
-    throw new ConfigError(
-      `HELM_STATE_DIR ${JSON.stringify(value)} must not be equal to or under FM_HOME ${JSON.stringify(fmHome)}; helm must never write under $FM_HOME`,
-    );
+  if (fmHome !== undefined) {
+    const resolvedFmHome = resolveExistingPath(fmHome);
+    const resolvedStateDir = resolveExistingPath(value);
+    if (isPathInsideOrEqual(resolvedStateDir, resolvedFmHome)) {
+      throw new ConfigError(
+        `HELM_STATE_DIR ${JSON.stringify(value)} must not be equal to or under FM_HOME ${JSON.stringify(fmHome)}; helm must never write under $FM_HOME`,
+      );
+    }
   }
   return value;
 }
