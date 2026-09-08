@@ -12,14 +12,13 @@
  * Shapes are taken from `herdr api schema --json` at protocol 20 and from
  * observed CLI output on Herdr 0.8.2.
  */
-import { spawn } from "node:child_process";
 import { connect, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { statSync } from "node:fs";
 import { z } from "zod";
 
 import type { HelmConfig } from "./config";
-import { describeFailure, runArgv, type ExecResult } from "./exec";
+import { describeFailure, runArgv, streamArgv, type ExecResult } from "./exec";
 
 /**
  * Minimum Herdr socket protocol helm is written against. The terminal-session
@@ -118,8 +117,7 @@ export function observeTerminal(
     "--rows",
     String(viewport.rows),
   ];
-  const argv = [cfg.herdrBin, ...args];
-  const child = spawn(cfg.herdrBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = streamArgv(cfg.herdrBin, args);
 
   const queue = new RecordQueue<TerminalRecord>();
   let stderr = "";
@@ -143,26 +141,23 @@ export function observeTerminal(
     }
   });
 
-  const exit = new Promise<TerminalObservationExit>((resolve) => {
-    child.on("error", (cause) => {
-      const message = `${argv[0]}: ${cause.message}`;
-      queue.fail(message);
-      resolve({ exitCode: null, signal: null, error: message });
-    });
-    child.on("close", (code, signal) => {
-      queue.end();
-      resolve({
-        exitCode: code,
-        signal,
-        error:
-          recordDrift ??
-          (code === 0 || code === null ? null : `${argv[0]}: exited ${code}: ${stderr.trim()}`),
-      });
-    });
+  const exit = child.exit.then((result) => {
+    if (result.error !== null) queue.fail(result.error);
+    else queue.end();
+    return {
+      exitCode: result.exitCode,
+      signal: result.signal,
+      error:
+        recordDrift ??
+        result.error ??
+        (result.exitCode === 0 || result.exitCode === null
+          ? null
+          : `${child.argv[0]}: exited ${result.exitCode}: ${stderr.trim()}`),
+    };
   });
 
   return {
-    argv,
+    argv: child.argv,
     exit,
     close: () => child.kill("SIGTERM"),
     [Symbol.asyncIterator]: () => queue[Symbol.asyncIterator](),
