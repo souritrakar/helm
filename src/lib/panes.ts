@@ -107,6 +107,7 @@ export class PaneDirectory {
   #refreshAgain = false;
   #discovery: PaneDiscovery | null = null;
   #snapshotTasks: readonly FleetTask[] | null = null;
+  #degraded = false;
   #closed = false;
   constructor(readonly cfg: HelmConfig, readonly onUpdate: (value: PaneDiscovery) => void, readonly onError: (message: string) => void) {}
 
@@ -182,11 +183,12 @@ export class PaneDirectory {
     if (snapshotDone && snapshotReady !== undefined) {
       this.#snapshotTasks = snapshotReady.tasks;
       this.#publish(crossReferencePanes(panes, agentPaneIds, snapshotReady.tasks, this.cfg.fmHome));
+      this.#withdrawDegraded();
       return;
     }
     this.#publish(crossReferencePanes(panes, agentPaneIds, this.#snapshotTasks ?? [], this.cfg.fmHome));
     if (!snapshotDone && this.#snapshotTasks === null) {
-      this.onError("fleet snapshot is still running");
+      this.#reportDegraded("fleet snapshot is still running");
     }
     if (snapshotDone) {
       this.#failed(snapshotError);
@@ -197,7 +199,7 @@ export class PaneDirectory {
       if (this.#closed) return;
       this.#snapshotTasks = snapshot.tasks;
       this.#publish(this.#retainStatus(crossReferencePanes(panes, agentPaneIds, snapshot.tasks, this.cfg.fmHome)));
-      this.onError("");
+      this.#withdrawDegraded();
     } catch (cause) {
       this.#failed(cause);
     }
@@ -297,8 +299,19 @@ export class PaneDirectory {
 
   #failed(cause: unknown): void {
     if (this.#closed) return;
-    this.onError(cause instanceof Error ? cause.message : String(cause));
+    this.#reportDegraded(cause instanceof Error ? cause.message : String(cause));
     this.#scheduleRetry();
+  }
+
+  #reportDegraded(message: string): void {
+    this.#degraded = true;
+    this.onError(message);
+  }
+
+  #withdrawDegraded(): void {
+    if (this.#closed || !this.#degraded || this.#retry !== null) return;
+    this.#degraded = false;
+    this.onError("");
   }
 
   #scheduleRetry(): void {

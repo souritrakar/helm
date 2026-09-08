@@ -288,4 +288,87 @@ describe("PaneDirectory", () => {
     expect(onError).toHaveBeenCalledWith("snapshot failed");
     directory.close();
   });
+
+  it("does not clear a stream-close notice when a later snapshot fulfills", async () => {
+    let finishSnapshot!: (value: { tasks: never[] }) => void;
+    fleetSnapshot.mockReturnValue(
+      new Promise<{ tasks: never[] }>((resolve) => {
+        finishSnapshot = resolve;
+      }),
+    );
+    agentList.mockResolvedValue([{ pane_id: "w1:p1" }]);
+    paneList.mockResolvedValue([pane("w1:p1")]);
+    const resolvers: Array<() => void> = [];
+    subscribeEvents.mockImplementation(() => {
+      let resolveClosed = (): void => undefined;
+      const stream: HerdrEventStream = {
+        ready: Promise.resolve(),
+        closed: new Promise<void>((resolve) => {
+          resolveClosed = resolve;
+        }),
+        close: vi.fn(),
+      };
+      resolvers.push(resolveClosed);
+      return stream;
+    });
+
+    const onError = vi.fn();
+    let published!: () => void;
+    const firstPublish = new Promise<void>((resolveFirst) => {
+      published = resolveFirst;
+    });
+    const directory = new PaneDirectory(config, () => published(), onError);
+    void directory.start();
+    await firstPublish;
+    expect(onError).toHaveBeenCalledWith("fleet snapshot is still running");
+
+    resolvers[0]?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onError).toHaveBeenCalledWith("pane event stream closed");
+
+    finishSnapshot({ tasks: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onError).not.toHaveBeenCalledWith("");
+    expect(onError).toHaveBeenLastCalledWith("pane event stream closed");
+    directory.close();
+  });
+
+  it("withdraws a snapshot-failure notice after a later successful snapshot", async () => {
+    fleetSnapshot.mockRejectedValueOnce(new Error("snapshot failed"));
+    fleetSnapshot.mockResolvedValue({ tasks: [] });
+    agentList.mockResolvedValue([{ pane_id: "w1:p1" }]);
+    paneList.mockResolvedValue([pane("w1:p1")]);
+    hangingStream();
+
+    const onError = vi.fn();
+    const directory = new PaneDirectory(config, () => undefined, onError);
+    await directory.start();
+    expect(onError).toHaveBeenCalledWith("snapshot failed");
+    expect(onError).not.toHaveBeenCalledWith("");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onError).toHaveBeenLastCalledWith("");
+    directory.close();
+  });
+
+  it("does not broadcast an empty notice on a refresh that was never degraded", async () => {
+    fleetSnapshot.mockResolvedValue({ tasks: [] });
+    agentList.mockResolvedValue([{ pane_id: "w1:p1" }]);
+    paneList.mockResolvedValue([pane("w1:p1")]);
+    hangingStream();
+
+    const onError = vi.fn();
+    const directory = new PaneDirectory(config, () => undefined, onError);
+    await directory.start();
+    expect(onError).not.toHaveBeenCalled();
+
+    await directory.refresh();
+    expect(onError).not.toHaveBeenCalled();
+    directory.close();
+  });
 });
