@@ -7,17 +7,16 @@
 ## Environment
 
 Set these in the shell that runs `bin/helm`, or in the systemd user unit.
+The eight values `loadConfig` reads (`FM_HOME`, `HELM_STATE_DIR`,
+`HERDR_SOCKET_PATH`, `HERDR_BIN`, `HELM_PORT`, `HELM_BIND`,
+`HELM_CAPTAIN_PANE`, `HELM_OUTPUT_MATCHES`) are listed in
+[README Configuration](../README.md#configuration). Output-match JSON is
+in [adapters.md](adapters.md#tier-1--a-pattern-no-code).
+
+The launcher also honours:
 
 | Variable | Default | Role |
 | --- | --- | --- |
-| `FM_HOME` | required | firstmate home (`bin/` and `state/` must be readable). |
-| `HELM_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/helm` | Pidfile, logs, answered history, audit log. Absolute. Must not resolve under `FM_HOME`. |
-| `HELM_PORT` | `7333` | HTTP port. |
-| `HELM_BIND` | `127.0.0.1` | Listen address. Phase 1 is loopback. |
-| `HERDR_SOCKET_PATH` | `${XDG_CONFIG_HOME:-~/.config}/herdr/herdr.sock` | Herdr control socket. |
-| `HERDR_BIN` | `herdr` | Herdr executable. |
-| `HELM_CAPTAIN_PANE` | unset | Firstmate pane id for relay-class answers. |
-| `HELM_OUTPUT_MATCHES` | `[]` | JSON array. See [adapters.md](adapters.md#tier-1--a-pattern-no-code). |
 | `HELM_FOREGROUND` | `0` | `1` in the systemd unit so `start` stays in the foreground under systemd. |
 
 Loader: `src/lib/config.ts`. `bin/helm start` also requires a prior
@@ -36,7 +35,7 @@ it by hand.
 | --- | --- |
 | `bin/helm doctor` | Pre-start gate and operator diagnostic. Exit 0 only when the box is usable. |
 | `bin/helm build` | `pnpm --dir <helm-root> build`. |
-| `bin/helm start` | Validates state dir, refuses a live pidfile, runs doctor, rotates logs if needed, launches the production server, waits until this process group owns `HELM_BIND:HELM_PORT`. |
+| `bin/helm start` | Validates state dir, refuses a live pidfile, runs doctor, rotates logs if needed, launches the production server. The background path waits until this process group owns `HELM_BIND:HELM_PORT`. With `HELM_FOREGROUND=1` (the systemd unit) it stays in the foreground and does not run that listen probe. |
 | `bin/helm stop` | If the user unit is active, `systemctl --user stop helm.service`. Otherwise SIGTERM (then SIGKILL) on the recorded process group. |
 | `bin/helm status` | Prints `service=… process=… bind=…`. Exit 0 when the unit is active or the process is running. |
 | `bin/helm logs` | Last 200 lines of `$HELM_STATE_DIR/helm.log`. |

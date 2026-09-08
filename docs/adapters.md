@@ -209,7 +209,7 @@ Verify against `src/lib/adapters/state.ts` and
 | `status-decisions` | `scanOpenDecisions` | `status-decision`, blocking | `resolve-key` with `target` = task id and `key` from the fold. `allowFreeform: true`, no options. |
 | `captain-holds` | fleet snapshot, `captain_actionable` | `captain-held`, blocking | `relay` to `HELM_CAPTAIN_PANE`, or `none` |
 | `bearings` | `decisions_open` and `gates` | `decision` (open decisions), `merge` / `credential` / `blocker` (gates) | Open decisions: `none`. Gates: `relay` or `none`. |
-| `captain-notes` | `state/inbox/*.note` | `note`, fyi | `relay` if a captain pane is set |
+| `captain-notes` | `state/inbox/*.note` | `note`, fyi | `relay` to `HELM_CAPTAIN_PANE`, or `none` |
 | `steering-backlog` | `state/<id>.inbox/*.msg` | `note`, fyi | `none` |
 | `procevent` | `state/procevent-inbox/*.result` without `.handled` | `review`, attention | `none`. Classify only. Never auto-apply. |
 | `agent-state` | live blocked Herdr agents | `blocker`, blocking | `relay` or `none` |

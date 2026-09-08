@@ -20,8 +20,10 @@ On boot the server:
 2. Starts the inbox runtime (`src/lib/inbox-runtime.ts`): store, responder,
    audit writer, adapter registry, visibility tracker.
 3. Prepares the Next.js request handler for the page.
-4. Attaches pane discovery, the terminal WebSocket upgrade, inbox HTTP, and
-   the operator gate.
+4. Attaches inbox HTTP, Converse input, and the terminal WebSocket upgrade
+   behind the operator gate.
+5. Listens on `HELM_BIND`:`HELM_PORT`, then starts pane discovery
+   (`src/lib/panes.ts`).
 
 Bind address and port come from `HELM_BIND` and `HELM_PORT` (SPEC D10). Phase 1
 listens on loopback by default. Mutating calls go through `requireOperator`
@@ -94,8 +96,9 @@ stream.
 
 **Responder** (`src/lib/responder.ts`). This is the only component allowed to
 cause an effect. One function per channel. Each is a direct argv exec. Every
-attempt, success or failure, is appended to `actions.jsonl`. The UI is
-optimistic and reverts on nonzero exit.
+attempt, success or failure, is appended to `actions.jsonl`. The card waits
+for `POST /api/inbox/:id/respond`; a refused route or nonzero exit leaves it
+open and shows the error. Success marks the item answered in the store.
 
 Notifications (`src/lib/inbox-runtime.ts`,
 `src/components/inbox-notifications.tsx`) subscribe to the store. They announce
@@ -138,7 +141,7 @@ Ratified 2026-09-06, with `dc-captain-hold-direct-path` on 2026-09-07.
 
 | Item class | Channel | Exec |
 | --- | --- | --- |
-| Keyed `status-decision` whose card declared `resolve-key` | `resolve-key` | `fm-send.sh <task.id> --resolve-key <key> "<answer>"`. Task id and key come verbatim from the card. helm never builds `fm-<id>`. |
+| Keyed `status-decision` whose card declared `resolve-key` | `resolve-key` | `fm-send.sh <task.id> --resolve-key <key> <answer>` (answer is one argv element). Task id and key come verbatim from the card. helm never builds `fm-<id>`. |
 | `captain-held`, `merge`, `credential`, `destructive`, `irreversible`, `security-sensitive` | `relay` always | `herdr pane run <HELM_CAPTAIN_PANE> "[helm <item.id>] <answer>"` |
 | Other actionable kinds | `relay` | same |
 | Cards with `channel: "none"` (steering backlog, process-event review, bearings open decisions, anything lacking a captain pane) | `none` | refused |

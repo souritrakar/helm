@@ -95,7 +95,8 @@ For example, to surface a visible line containing `ready` from pane `w1:p1`:
 export HELM_OUTPUT_MATCHES='[{"id":"ready","paneId":"w1:p1","source":"visible","match":{"type":"substring","value":"ready"}}]'
 ```
 
-Loader and validation live in `src/lib/config.ts`.
+Loader and validation live in `src/lib/config.ts`. Launcher-only
+`HELM_FOREGROUND` is in [operations](docs/operations.md).
 
 ## Commands
 
