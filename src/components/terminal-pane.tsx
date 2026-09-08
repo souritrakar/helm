@@ -49,7 +49,6 @@ export function TerminalPane() {
       disableStdin: true,
       allowTransparency: false,
       cursorBlink: false,
-      convertEol: true,
       fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
       fontSize: 13,
       theme: { background: "#09090b", foreground: "#fafafa" },
