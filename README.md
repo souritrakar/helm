@@ -128,13 +128,14 @@ archives; the timer does not need `FM_HOME`. If local policy prevents lingering,
 
 The terminal panel is a live, read-only Herdr observer. Choose an available pane from its dropdown;
 task-backed panes show their human-readable task title with the task id as supplementary context.
-The Converse field sends a one-shot text message to the selected pane, rather than giving helm
-take-control or raw keyboard-stream access. A dropped observer can be reconnected from the panel.
+The Converse field sends a one-shot single-line text message to the selected pane, rather than
+giving helm take-control or raw keyboard-stream access. A dropped observer can be reconnected from
+the panel.
 
 | Endpoint | Behavior |
 | --- | --- |
 | `GET /api/term?cols=<cols>&rows=<rows>` | WebSocket terminal mirror. The initial viewport must be 2–500 columns and 2–300 rows; invalid or absent dimensions use 80×24. |
-| `POST /api/term/input` | Sends exactly one JSON `{ "paneId", "text" }` message, or a named `{ "paneId", "key" }` key (`enter`, `escape`, or `c-c`), to a currently discovered pane. |
+| `POST /api/term/input` | Sends exactly one JSON `{ "paneId", "text" }` message (single line: no tab, newline, or control characters), or a named `{ "paneId", "key" }` key (`enter`, `escape`, or `c-c`), to a currently discovered pane. |
 
 Both terminal surfaces pass the same local operator gate as inbox mutations. Terminal output is an
 observer stream; a resize, pane switch, or sequence gap replaces that observer and waits for a full
