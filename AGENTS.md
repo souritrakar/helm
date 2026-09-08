@@ -56,14 +56,16 @@ These are not style preferences. Each one protects something that fails silently
   Browser OS notifications fire only while the tab is hidden. Suppress the Herdr-native nudge
   only when an authorized session reports the tab is **visible and focused** and the rendered
   card is on screen (`src/lib/inbox-visibility.ts`); missing or failed presence does not suppress.
-  Presence is `GET`/`POST /api/inbox/visibility` with a per-session monotonic sequence. Lane G
-  observes existing `[data-inbox-item-id]` DOM cards; live store cards depend on Lane H rendering
-  the store into the shell.
-- **Responder routing (D-C, ratified 2026-09-06):** keyed status decisions → `resolve-key` (direct);
-  captain-held (`channel: "captain-hold"`), freeform, and anything merge/credential/destructive →
-  `relay` always. `routeChannel` forces that relay; it never selects the direct
-  `fm-captain-hold.sh` path (captain decision `dc-captain-hold-direct-path`). See
-  `src/lib/responder.ts`.
+  Presence is `GET`/`POST /api/inbox/visibility` with a per-session monotonic sequence. The shell
+  renders store cards from SSE `/api/events` (`[data-inbox-item-id]`) and answers with
+  `POST /api/inbox/:id/respond`. Typed answers on keyed status-decision cards stay on
+  `resolve-key`; captain-held, merge, credential, and other freeform cards relay.
+- **Responder routing (D-C, ratified 2026-09-06):** keyed status decisions → `resolve-key` (direct),
+  including a typed answer when the fold emitted no options; captain-held (`channel: "captain-hold"`),
+  other freeform kinds, and anything merge/credential/destructive → `relay` always. `routeChannel`
+  forces that relay; it never selects the direct `fm-captain-hold.sh` path (captain decision
+  `dc-captain-hold-direct-path`). See `src/lib/responder.ts`. The AC 18 checksum proof is
+  `tests/ac18-fm-home-untouched.test.ts`.
 - **Respond API contract:** `POST /api/inbox/:id/respond` rejects freeform text when
   `allowFreeform` is false, rejects a `value` not in `item.options`, rejects `value` when
   `options` is empty (use `text` with `allowFreeform`), and rejects bodies that send both

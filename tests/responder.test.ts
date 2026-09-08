@@ -79,9 +79,13 @@ describe("routeChannel (D-C)", () => {
     expect(routeChannel(baseItem({ urgency: "blocking", title: "Blocked: task", detail: "blocked", kind: "status-decision" }))).toBe("resolve-key");
   });
 
-  it("relays untyped or freeform decisions that declare resolve-key", () => {
+  it("relays untyped decisions that declare resolve-key", () => {
     expect(routeChannel(baseItem({ kind: "decision" }))).toBe("relay");
-    expect(routeChannel(baseItem({ allowFreeform: true }))).toBe("relay");
+    expect(routeChannel(baseItem({ kind: "note", allowFreeform: true }))).toBe("relay");
+  });
+
+  it("keeps a typed keyed status decision on resolve-key", () => {
+    expect(routeChannel(baseItem({ allowFreeform: true, options: [] }))).toBe("resolve-key");
   });
 
   it("honours relay for freeform cards", () => {
@@ -134,6 +138,39 @@ describe("createResponder", () => {
       argv: ["fm-send.sh", "helm-foundation", "--resolve-key", "api-shape", "A"],
       exitCode: 0,
     });
+  });
+
+  it("sends a typed keyed status-decision answer through resolve-key (AC 8)", async () => {
+    const audit = createMemoryAuditWriter();
+    const calls: string[] = [];
+    const responder = createResponder({
+      config: CONFIG,
+      audit,
+      exec: {
+        resolveKey: async (_item, answer) => {
+          calls.push(answer);
+          return ok("resolve-key", [
+            "fm-send.sh",
+            "helm-foundation",
+            "--resolve-key",
+            "api-shape",
+            answer,
+          ]);
+        },
+        relay: async () => {
+          throw new Error("typed keyed answers must not relay");
+        },
+      },
+    });
+
+    const result = await responder.respond(
+      baseItem({ allowFreeform: true, options: [] }),
+      { text: "ship the items model" },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual(["ship the items model"]);
+    expect(audit.entries[0]?.channel).toBe("resolve-key");
   });
 
   it("relays merge cards even when the card declared resolve-key", async () => {

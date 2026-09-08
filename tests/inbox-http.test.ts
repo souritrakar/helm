@@ -249,6 +249,35 @@ describe("POST /api/inbox/:id/respond", () => {
     expect(res.status).toBe(400);
   });
 
+  it("accepts typed text on an empty-option keyed status-decision (AC 8)", async () => {
+    store.reconcile("fake", [
+      {
+        ...item("k1"),
+        kind: "status-decision",
+        allowFreeform: true,
+        options: [],
+      },
+    ]);
+    const id = encodeURIComponent(inboxItemId("fake", "k1"));
+    const res = await fetch(`${baseUrl}/api/inbox/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "choose A" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; argv: string[]; channel: string };
+    expect(body.ok).toBe(true);
+    expect(body.channel).toBe("resolve-key");
+    expect(body.argv).toEqual([
+      "fm-send.sh",
+      "helm-foundation",
+      "--resolve-key",
+      "k1",
+      "choose A",
+    ]);
+    expect(store.listOpen()).toHaveLength(0);
+  });
+
   it("returns 400 for value when options is empty", async () => {
     store.reconcile("fake", [
       {
