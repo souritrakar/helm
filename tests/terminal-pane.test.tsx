@@ -108,6 +108,17 @@ describe("TerminalPane banners", () => {
       deliver(socket, { type: "terminal.status", status: "connecting", reason: "pane-switched" });
     });
     expect(screen.queryByText("pane-switched")).toBeNull();
+    act(() => {
+      deliver(socket, { type: "terminal.status", status: "connecting", reason: "reconnecting" });
+    });
+    expect(screen.queryByText("reconnecting")).toBeNull();
+    act(() => {
+      socket.onclose?.();
+    });
+    expect(screen.getByText("Disconnected")).toBeTruthy();
+    expect(screen.queryByText("connected")).toBeNull();
+    expect(screen.queryByText("resized")).toBeNull();
+    expect(screen.queryByText("pane-switched")).toBeNull();
   });
 
   it("shows a closed-status reason as a warning banner", async () => {
@@ -133,6 +144,11 @@ describe("TerminalPane banners", () => {
       deliver(socket, { type: "terminal.panes", panes: [pane("w1:p1", "working")], selectedPaneId: "w1:p1" });
     });
     expect(screen.getByText("Pane discovery is degraded: snapshot failed")).toBeTruthy();
+
+    act(() => {
+      deliver(socket, { type: "terminal.notice", message: "" });
+    });
+    expect(screen.queryByText("Pane discovery is degraded: snapshot failed")).toBeNull();
   });
 
   it("clears banners when the selected pane changes", async () => {

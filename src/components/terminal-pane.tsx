@@ -62,6 +62,7 @@ export function TerminalPane() {
     let disposed = false;
     let lastPaneIds = "";
     let lastSelectedPaneId: string | null = null;
+    let closedStatusReason = false;
 
     const connect = (): void => {
       if (disposed) return;
@@ -89,12 +90,24 @@ export function TerminalPane() {
           setSelectedPaneId(message.selectedPaneId);
           if (changed) { setNotice(""); setSendError(""); }
         } else if (message.type === "terminal.status") {
-          setStatus(message.status); setDetail(typeof message.reason === "string" ? message.reason : "");
+          setStatus(message.status);
+          if (message.status === "closed") {
+            closedStatusReason = true;
+            setDetail(typeof message.reason === "string" ? message.reason : "");
+          } else {
+            closedStatusReason = false;
+            setDetail("");
+          }
         } else if (message.type === "terminal.notice") {
           setNotice(message.message);
         }
       };
-      socket.onclose = () => { if (!disposed && socketRef.current === socket) setStatus("closed"); };
+      socket.onclose = () => {
+        if (!disposed && socketRef.current === socket) {
+          setStatus("closed");
+          if (!closedStatusReason) setDetail("");
+        }
+      };
       socket.onerror = () => undefined;
     };
     connectRef.current = connect;

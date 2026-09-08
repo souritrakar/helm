@@ -247,6 +247,7 @@ describe("PaneDirectory", () => {
       { id: "w1:p1", taskTitle: null },
       { id: "w1:p1", taskTitle: "Human title" },
     ]);
+    expect(onError).toHaveBeenLastCalledWith("");
     directory.close();
   });
 

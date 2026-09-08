@@ -197,6 +197,7 @@ export class PaneDirectory {
       if (this.#closed) return;
       this.#snapshotTasks = snapshot.tasks;
       this.#publish(this.#retainStatus(crossReferencePanes(panes, agentPaneIds, snapshot.tasks, this.cfg.fmHome)));
+      this.onError("");
     } catch (cause) {
       this.#failed(cause);
     }

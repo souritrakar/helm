@@ -105,6 +105,10 @@ async function main(): Promise<void> {
     for (const client of clients) sendJson(client.socket, { type: "terminal.notice", message });
   };
   const directory = new PaneDirectory(config, (nextDiscovery) => { discovery = nextDiscovery; broadcastPanes(); }, (error) => {
+    if (error === "") {
+      broadcastNotice("");
+      return;
+    }
     // Discovery is degraded, not dead: the last-known pane list stands and the
     // directory keeps retrying, so this is a notice rather than a teardown.
     console.error(`helm pane discovery: ${error}`);
