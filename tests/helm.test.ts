@@ -183,6 +183,23 @@ describe("helm launcher", () => {
     expect(existsSync(join(state, "helm.log.1"))).toBe(false);
   });
 
+  it("rotates a 10 MiB log without FM_HOME and without creating FM_HOME", () => {
+    const directory = workspace();
+    const state = join(directory, "state");
+    mkdirSync(state);
+    const payload = "keep-me-rotated\n";
+    writeFileSync(join(state, "helm.log"), payload.repeat(Math.ceil((10 * 1024 * 1024) / payload.length)));
+    const env = { ...process.env, HELM_STATE_DIR: state };
+    delete env.FM_HOME;
+    const result = spawnSync(join(root, "bin/helm"), ["rotate-logs"], { encoding: "utf8", env });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("FM_HOME");
+    expect(readFileSync(join(state, "helm.log"), "utf8")).toBe("");
+    expect(readFileSync(join(state, "helm.log.1"), "utf8").startsWith("keep-me-rotated\n")).toBe(true);
+    expect(existsSync(join(directory, "firstmate"))).toBe(false);
+  });
+
   it("refuses rotate-logs under FM_HOME before creating state", () => {
     const directory = workspace();
     const fmHome = join(directory, "firstmate");

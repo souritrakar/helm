@@ -29,8 +29,9 @@ export interface HelmConfig {
   /**
    * helm's own writable state (`~/.local/state/helm` by default).
    *
-   * Answered-history and the audit log live here. This is never under
-   * `$FM_HOME` — helm must not write there (AGENTS.md hard rule 1).
+   * The pidfile, rotating service logs, answered-history, and the audit log
+   * live here. This is never under `$FM_HOME` — helm must not write there
+   * (AGENTS.md hard rule 1).
    */
   readonly helmStateDir: string;
   /** Herdr control socket. Liveness is a doctor concern, not a load concern. */

@@ -562,8 +562,9 @@ const socketSnapshotSchema = z.object({
 });
 
 /**
- * Assert that Herdr is present, speaks a protocol helm understands, and has a
- * control socket. Reports every problem it finds rather than the first.
+ * Assert that Herdr is present, speaks a protocol helm understands, and that
+ * the control socket answers a Herdr health check at that protocol. Reports
+ * every problem it finds rather than the first.
  */
 export async function herdrDoctor(cfg: HelmConfig): Promise<HerdrDoctorResult> {
   const problems: string[] = [];

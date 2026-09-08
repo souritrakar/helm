@@ -3,5 +3,6 @@ Description=Rotate helm service logs
 
 [Service]
 Type=oneshot
+# rotate-logs validates HELM_STATE_DIR only; do not template FM_HOME here.
 Environment="HELM_STATE_DIR=@HELM_STATE_DIR@"
 ExecStart="@HELM_ROOT@/bin/helm" rotate-logs
