@@ -212,6 +212,10 @@ async function main(): Promise<void> {
     }
     websocketServer.close();
     server.close(() => process.exit(0));
+    // `server.close()` stops accepting connections but waits for active HTTP
+    // requests. Inbox SSE deliberately keeps one open, so force those
+    // connections closed after the listener has stopped accepting new ones.
+    server.closeAllConnections();
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
