@@ -32,7 +32,7 @@ function open(source: string, naturalKey: string, fields: Omit<InboxItem, "id" |
  * `channel: "none"` is an honest "nothing can carry this answer" — the card
  * renders read-only rather than offering a control that would fail.
  */
-function relay(deps: StateAdapterDeps): InboxRespondSpec {
+export function relay(deps: StateAdapterDeps): InboxRespondSpec {
   const target = deps.relayTarget();
   return target === undefined ? { channel: "none" } : { channel: "relay", target };
 }

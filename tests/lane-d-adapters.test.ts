@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHerdrAdapters } from "@/lib/adapters/herdr-events";
 import { registerProductionAdapters } from "@/lib/adapters";
 import { createAdapterRegistry } from "@/lib/adapters/registry";
-import { createStateAdapters } from "@/lib/adapters/state";
+import { createStateAdapters, type StateAdapterDeps } from "@/lib/adapters/state";
 import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
 import type { InboxItem } from "@/lib/types";
 
@@ -35,6 +35,7 @@ async function start(adapter: ReturnType<typeof createStateAdapters>[number] | R
   disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
 }
 function stateAdapter(id: string) { return createStateAdapters(config, { relayTarget: () => RELAY_PANE }).find((adapter) => adapter.id === id)!; }
+function herdrAdapter(id: string, deps: StateAdapterDeps = { relayTarget: () => RELAY_PANE }) { return createHerdrAdapters(config, deps).find((adapter) => adapter.id === id)!; }
 
 describe("state record adapters", () => {
   it("registers all nine production sources exactly once", () => {
@@ -131,12 +132,24 @@ describe("output-match adapter", () => {
       socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
     }); });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    config = { ...config, captainPane: "w1:captain", outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Deploy failed" }] };
-    const adapter = createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!;
+    config = { ...config, outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Deploy failed" }] };
+    const adapter = herdrAdapter("output-match");
     disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
     await vi.waitUntil(() => emitted.length > 0);
     expect(request).toMatchObject({ method: "events.subscribe", params: { subscriptions: [{ type: "pane.output_matched", pane_id: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] } });
-    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: "w1:captain" } }]);
+    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: RELAY_PANE } }]);
+  });
+
+  it("leaves an output-match card unanswerable when no relay pane is reachable", async () => {
+    server = createServer((socket) => { connection = socket; socket.once("data", () => {
+      socket.write('{"result":{"type":"subscription_started"}}\n');
+      socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
+    }); });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    config = { ...config, outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] };
+    await start(herdrAdapter("output-match", { relayTarget: () => undefined }));
+    await vi.waitUntil(() => emitted.length > 0);
+    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", respond: { channel: "none" } }]);
   });
 
   it("uses the event source and emits every overlapping configured pattern", async () => {
@@ -150,7 +163,7 @@ describe("output-match adapter", () => {
       { id: "visible-a", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Visible failure" },
       { id: "visible-b", paneId: "w1:p2", source: "visible", match: { type: "regex", value: "deploy" }, title: "Deploy output" },
     ] };
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!);
+    await start(herdrAdapter("output-match"));
     await vi.waitUntil(() => emitted.at(-1)?.length === 2);
     expect(emitted.at(-1)?.map((entry) => entry.id)).toEqual([
       "output-match:visible-a:1:w1:p2:4", "output-match:visible-b:2:w1:p2:4",
@@ -167,7 +180,7 @@ describe("output-match adapter", () => {
       { id: "failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Failure" },
       { id: "failure", paneId: "w1:p2", source: "visible", match: { type: "regex", value: "deploy" }, title: "Deploy" },
     ] };
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!);
+    await start(herdrAdapter("output-match"));
     await vi.waitUntil(() => emitted.at(-1)?.length === 2);
     expect(emitted.at(-1)?.map((entry) => entry.id)).toEqual([
       "output-match:failure:0:w1:p2:4", "output-match:failure:1:w1:p2:4",
@@ -205,12 +218,13 @@ describe("agent-state adapter", () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    await start(herdrAdapter("agent-state"));
     await vi.waitUntil(() => requests.length === 2);
     expect(requests[1]).toMatchObject({ method: "events.subscribe", params: { subscriptions: expect.arrayContaining([
       { type: "pane.agent_status_changed", pane_id: "w1:p9" },
     ]) } });
     await vi.waitUntil(() => emitted.at(-1)?.some((entry) => entry.id === "agent-state:w1:p9"));
+    expect(emitted.at(-1)).toMatchObject([{ id: "agent-state:w1:p9", respond: { channel: "relay", target: RELAY_PANE } }]);
   });
 
   it("reconciles a blocker that appears before the first subscription is ready", async () => {
@@ -228,8 +242,8 @@ describe("agent-state adapter", () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
-    expect(emitted.at(-1)).toMatchObject([{ id: "agent-state:w1:p1", kind: "blocker" }]);
+    await start(herdrAdapter("agent-state", { relayTarget: () => undefined }));
+    expect(emitted.at(-1)).toMatchObject([{ id: "agent-state:w1:p1", kind: "blocker", respond: { channel: "none" } }]);
   });
 
   it("prunes a pane absent from the post-ready agent snapshot", async () => {
@@ -247,7 +261,7 @@ describe("agent-state adapter", () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    await start(herdrAdapter("agent-state"));
     expect(emitted.at(-1)).toEqual([]);
   });
 
@@ -271,7 +285,7 @@ describe("agent-state adapter", () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    await start(herdrAdapter("agent-state"));
     await vi.waitUntil(() => requests.some((request) => {
       const paneIds = (request as { params?: { subscriptions?: Array<{ pane_id?: string }> } }).params?.subscriptions?.map((entry) => entry.pane_id) ?? [];
       return paneIds.includes("w1:p1") && !paneIds.includes("w9:p1");

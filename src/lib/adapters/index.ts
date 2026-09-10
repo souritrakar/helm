@@ -15,7 +15,7 @@ export function registerProductionAdapters(
   for (const adapter of [
     ...createStateAdapters(config, deps),
     createAnswerAdapter(config),
-    ...createHerdrAdapters(config),
+    ...createHerdrAdapters(config, deps),
   ]) {
     registry.register(adapter);
   }
