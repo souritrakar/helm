@@ -165,8 +165,9 @@ prune or TTL.
 - **Foreign listener.** Another process holds `HELM_BIND:HELM_PORT`. Move
   `HELM_PORT` or stop that process. Doctor will not treat a free port as the
   running instance, and will not treat a foreign pid as helm.
-- **Relay cards are non-actionable.** Set `HELM_CAPTAIN_PANE` to firstmate's
-  pane id. Under systemd, put it in a drop-in. The install-service template
-  does not capture it.
+- **Relay cards are non-actionable.** helm normally discovers the firstmate
+  pane from Herdr. If discovery cannot find one, set `HELM_CAPTAIN_PANE` to its
+  pane id; under systemd, put it in a drop-in because the install-service
+  template does not capture it.
 - **Tests fail looking for firstmate.** Point `HELM_TEST_FM_HOME` at a
   checkout, or set `HELM_SKIP_FM_CONTRACT=1` for local work only.

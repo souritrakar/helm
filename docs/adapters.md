@@ -83,8 +83,9 @@ export HELM_OUTPUT_MATCHES='[
 4. A match mints `kind: custom` with the matched line as `detail`. The natural
    key includes pattern id, index, pane id, and Herdr read revision, so a later
    match is a new card.
-5. If `HELM_CAPTAIN_PANE` is set, the card relays a typed answer to that pane.
-   If it is unset, `respond.channel` is `none`.
+5. The card relays a typed answer to `HELM_CAPTAIN_PANE` when configured, or
+   to Herdr's discovered firstmate pane otherwise. If neither is reachable,
+   `respond.channel` is `none`.
 
 `bin/helm install-service` does not capture `HELM_OUTPUT_MATCHES`. For the
 systemd unit, set the variable in a drop-in or in the user environment that
@@ -152,12 +153,14 @@ and rejects registration after start.
 | `urgency` | `blocking` notifies. `attention` and `fyi` do not. |
 | `options` / `allowFreeform` | Empty `options` plus `allowFreeform: true` is a typed answer. Empty `options` plus `allowFreeform: false` is display-only. |
 | `respond.channel` | `resolve-key`, `relay`, or `none`. Production routing never selects `captain-hold`. |
-| `respond.target` | Task id for `resolve-key`. Firstmate pane id for `relay` (`HELM_CAPTAIN_PANE`). |
+| `respond.target` | Task id for `resolve-key`. Firstmate pane id for `relay`, resolved at emit time from `HELM_CAPTAIN_PANE` or Herdr discovery. |
 | `respond.key` | Verbatim from the fold for `resolve-key`. |
 | `evidence` | Paths the human can open. Prefer paths helm already reads. |
 
-Relay needs `HELM_CAPTAIN_PANE`. If it is unset, ship `channel: "none"` rather
-than a relay card that the Responder will refuse.
+Relay uses `HELM_CAPTAIN_PANE` when set, otherwise the discovered firstmate
+pane. Resolve that target when emitting (and re-emit open event-backed cards
+when discovery changes). If neither is reachable, ship `channel: "none"`
+rather than a relay card that the Responder will refuse.
 
 ### Tests
 
@@ -207,11 +210,12 @@ Verify against `src/lib/adapters/state.ts` and
 | Adapter | Open set | Kind / urgency | Respond as shipped |
 | --- | --- | --- | --- |
 | `status-decisions` | `scanOpenDecisions` | `status-decision`, blocking | `resolve-key` with `target` = task id and `key` from the fold. `allowFreeform: true`, no options. |
-| `captain-holds` | fleet snapshot, `captain_actionable` | `captain-held`, blocking | `relay` to `HELM_CAPTAIN_PANE`, or `none` |
+| `captain-holds` | fleet snapshot, `captain_actionable` | `captain-held`, blocking | `relay` to the configured or discovered firstmate pane, or `none` |
 | `bearings` | `decisions_open` and `gates` | `decision` (open decisions), `merge` / `credential` / `blocker` (gates) | Open decisions: `none`. Gates: `relay` or `none`. |
-| `captain-notes` | `state/inbox/*.note` | `note`, fyi | `relay` to `HELM_CAPTAIN_PANE`, or `none` |
+| `captain-notes` | `state/inbox/*.note` | `note`, fyi | `relay` to the configured or discovered firstmate pane, or `none` |
 | `steering-backlog` | `state/<id>.inbox/*.msg` | `note`, fyi | `none` |
 | `procevent` | `state/procevent-inbox/*.result` without `.handled` | `review`, attention | `none`. Classify only. Never auto-apply. |
+| `answers` | `state/answers/*.json` | `answer`, attention | `none`. Read-only answer records; the operator may dismiss them locally. |
 | `agent-state` | live blocked Herdr agents | `blocker`, blocking | `relay` or `none` |
 | `output-match` | configured matches | `custom` | `relay` or `none` |
 

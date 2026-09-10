@@ -23,7 +23,9 @@ On boot the server:
 4. Attaches inbox HTTP, Converse input, and the terminal WebSocket upgrade
    behind the operator gate.
 5. Listens on `HELM_BIND`:`HELM_PORT`, then starts pane discovery
-   (`src/lib/panes.ts`).
+   (`src/lib/panes.ts`). Discovery updates the relay target and re-emits open
+   relay cards, so cards raised before discovery become actionable without
+   delaying inbox startup.
 
 Bind address and port come from `HELM_BIND` and `HELM_PORT` (SPEC D10). Phase 1
 listens on loopback by default. Mutating calls go through `requireOperator`
@@ -56,9 +58,11 @@ observe` child (`src/lib/herdr.ts`).
 - The observer viewport is fixed at spawn. A client resize (debounced)
   replaces the observer. A sequence gap does the same, so the next `full`
   frame restores truth.
-- Input is one-shot: `POST /api/term/input` runs `herdr pane run` for text or
-  `herdr pane send-keys` for `enter`, `escape`, or `c-c`. helm does not hold a
-  control session.
+- Input is one-shot: `POST /api/term/input` runs `herdr pane run` for submitted
+  text, `herdr pane send-text` for text with `submit: false`, or `herdr pane
+  send-keys` for exactly one supported key (`enter`, `escape`, `tab`,
+  `backspace`, `up`, `down`, `left`, `right`, or `c-c`). helm does not hold a
+  control session or expose a raw byte stream.
 - Pane discovery (`src/lib/panes.ts`) refreshes on Herdr pane events and
   cross-references `fm-fleet-snapshot.sh` so task-backed panes show a title.
 
@@ -83,9 +87,12 @@ adapters  --full open set-->  InboxStore  --SSE-->  browser
 **Store** (`src/lib/inbox-store.ts`). Adapters emit the full current open set
 for their source. The store diffs by id (`${source}:${naturalKey}`), assigns
 `openedAt` on first sight, and emits `item.upsert` / `item.retract`. Answered
-and dismissed ids persist in `inbox-history.json` for the life of that data
-dir. A restart must not resurrect handled cards. Recurring conditions need a
-per-occurrence natural key, or the history suppresses the card forever.
+and dismissed records persist in version-2 `inbox-history.json` for the life
+of that data dir, including the handled card body and answer. A restart must
+not resurrect handled cards, and snapshot replay includes handled cards while
+its open-set boundary names only open ids. Version-1 history still suppresses
+old ids but cannot render them. Recurring conditions need a per-occurrence
+natural key, or the history suppresses the card forever.
 
 **SSE** (`src/lib/inbox-http.ts`). `GET /api/events` is the live feed. Wire ids
 are `<epoch>-<seq>`. A matching `Last-Event-ID` resumes the buffer. A missing,
@@ -114,7 +121,7 @@ that adapter's id, so one source cannot reconcile another source's cards away.
 Production registration is `registerProductionAdapters` in
 `src/lib/adapters/index.ts`.
 
-Eight read-only producers ship:
+Nine read-only producers ship:
 
 | Adapter | File | Source |
 | --- | --- | --- |
@@ -124,6 +131,7 @@ Eight read-only producers ship:
 | `captain-notes` | `adapters/state.ts` | `$FM_HOME/state/inbox/*.note` |
 | `steering-backlog` | `adapters/state.ts` | `$FM_HOME/state/<id>.inbox/*.msg` not under `handled/` |
 | `procevent` | `adapters/state.ts` | `$FM_HOME/state/procevent-inbox/*.result` via `fm-procevent.sh classify` |
+| `answers` | `adapters/answers.ts` | `$FM_HOME/state/answers/*.json`, schema-validated read-only answers |
 | `agent-state` | `adapters/herdr-events.ts` | Herdr `pane.agent_status_changed` when status is `blocked` |
 | `output-match` | `adapters/herdr-events.ts` | Configured `HELM_OUTPUT_MATCHES` / `pane.output_matched` |
 
@@ -142,9 +150,9 @@ Ratified 2026-09-06, with `dc-captain-hold-direct-path` on 2026-09-07.
 | Item class | Channel | Exec |
 | --- | --- | --- |
 | Keyed `status-decision` whose card declared `resolve-key` | `resolve-key` | `fm-send.sh <task.id> --resolve-key <key> <answer>` (answer is one argv element). Task id and key come verbatim from the card. helm never builds `fm-<id>`. |
-| `captain-held`, `merge`, `credential`, `destructive`, `irreversible`, `security-sensitive` | `relay` always | `herdr pane run <HELM_CAPTAIN_PANE> "[helm <item.id>] <answer>"` |
+| `captain-held`, `merge`, `credential`, `destructive`, `irreversible`, `security-sensitive` | `relay` always | `herdr pane run <configured or discovered firstmate pane> "[helm <item.id>] <answer>"` |
 | Other actionable kinds | `relay` | same |
-| Cards with `channel: "none"` (steering backlog, process-event review, bearings open decisions, anything lacking a captain pane) | `none` | refused |
+| Cards with `channel: "none"` (steering backlog, process-event review, bearings open decisions, anything lacking a reachable relay pane) | `none` | refused |
 
 A typed answer on a keyed status-decision card is still `resolve-key`. The fold
 emits no structured options, so the operator types the answer. That does not
