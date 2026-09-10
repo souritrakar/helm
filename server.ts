@@ -78,11 +78,16 @@ async function main(): Promise<void> {
   const allowedHosts = allowedHostsForBind(config.bind, config.port);
 
   let discovery: PaneDiscovery = { panes: [], defaultPaneId: null };
+  const relayTargetListeners = new Set<() => void>();
 
   // A configured pane wins; otherwise relay follows the firstmate pane Herdr
   // discovery found. Resolved per call, because discovery lands after start().
   const inbox = createInboxRuntime(config, {
     relayTarget: () => config.captainPane ?? discovery.panes.find((pane) => pane.isFirstmate)?.id,
+    onRelayTargetChanged: (listener) => {
+      relayTargetListeners.add(listener);
+      return () => relayTargetListeners.delete(listener);
+    },
   });
   await inbox.start();
 
@@ -123,7 +128,11 @@ async function main(): Promise<void> {
   const broadcastNotice = (message: string): void => {
     for (const client of clients) sendJson(client.socket, { type: "terminal.notice", message });
   };
-  const directory = new PaneDirectory(config, (nextDiscovery) => { discovery = nextDiscovery; broadcastPanes(); }, (error) => {
+  const directory = new PaneDirectory(config, (nextDiscovery) => {
+    discovery = nextDiscovery;
+    for (const listener of relayTargetListeners) listener();
+    broadcastPanes();
+  }, (error) => {
     if (error === "") {
       broadcastNotice("");
       return;

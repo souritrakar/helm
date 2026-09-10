@@ -20,6 +20,7 @@ const POLL_MS = 10_000;
  */
 export interface StateAdapterDeps {
   relayTarget(): string | undefined;
+  onRelayTargetChanged?(listener: () => void): () => void;
 }
 
 function open(source: string, naturalKey: string, fields: Omit<InboxItem, "id" | "source" | "state" | "openedAt">): InboxItem {

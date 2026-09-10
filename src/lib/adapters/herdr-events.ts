@@ -8,6 +8,11 @@ function item(source: string, naturalKey: string, fields: Omit<InboxItem, "id" |
   return { id: inboxItemId(source, naturalKey), source, state: "open", openedAt: new Date().toISOString(), ...fields };
 }
 
+function refreshRelay(items: Map<string, InboxItem>, deps: StateAdapterDeps): InboxItem[] {
+  for (const [id, current] of items) items.set(id, { ...current, respond: relay(deps) });
+  return [...items.values()];
+}
+
 /** Blocking cards for the live blocked set, reconstructed from status events. */
 function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
   return {
@@ -21,6 +26,7 @@ function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
         blocked.set(agent.pane_id, blockedItem(agent.pane_id, agent.terminal_title ?? agent.agent, deps));
       }
       ctx.emit([...blocked.values()]);
+      const unsubscribeRelayTarget = deps.onRelayTargetChanged?.(() => ctx.emit(refreshRelay(blocked, deps))) ?? (() => undefined);
       let stopped = false;
       let current: HerdrEventStream | undefined;
       let generation = 0;
@@ -121,13 +127,18 @@ function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
       }
 
       try {
-        await subscribe(true);
+        try {
+          await subscribe(true);
+        } catch (cause) {
+          console.error("agent-state: subscription failed", cause);
+          if (!forgetMissingPane(cause)) throw cause;
+          await subscribe(true);
+        }
       } catch (cause) {
-        console.error("agent-state: subscription failed", cause);
-        if (!forgetMissingPane(cause)) throw cause;
-        await subscribe(true);
+        unsubscribeRelayTarget();
+        throw cause;
       }
-      return { [Symbol.dispose]() { stopped = true; generation++; if (debounce !== undefined) clearTimeout(debounce); current?.close(); } };
+      return { [Symbol.dispose]() { stopped = true; generation++; if (debounce !== undefined) clearTimeout(debounce); current?.close(); unsubscribeRelayTarget(); } };
     },
   };
 }
@@ -147,6 +158,7 @@ function outputMatch(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
       const patterns = config.outputMatches ?? [];
       if (patterns.length === 0) return { [Symbol.dispose]() {} };
       const matched = new Map<string, InboxItem>();
+      const unsubscribeRelayTarget = deps.onRelayTargetChanged?.(() => ctx.emit(refreshRelay(matched, deps))) ?? (() => undefined);
       const stream = subscribeEvents(config, patterns.map(subscriptionFor), (event) => {
         if (event.event !== "pane.output_matched") return;
         const matching = patterns.map((pattern, index) => ({ pattern, index })).filter(({ pattern }) => pattern.paneId === event.data.pane_id && pattern.source === event.data.read.source && lineMatches(pattern, event.data.matched_line));
@@ -161,9 +173,14 @@ function outputMatch(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
         }
         ctx.emit([...matched.values()]);
       });
-      await stream.ready;
+      try {
+        await stream.ready;
+      } catch (cause) {
+        unsubscribeRelayTarget();
+        throw cause;
+      }
       reportStreamFailure("output-match", stream);
-      return { [Symbol.dispose]() { stream.close(); } };
+      return { [Symbol.dispose]() { stream.close(); unsubscribeRelayTarget(); } };
     },
   };
 }

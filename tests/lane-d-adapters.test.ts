@@ -10,6 +10,7 @@ import { registerProductionAdapters } from "@/lib/adapters";
 import { createAdapterRegistry } from "@/lib/adapters/registry";
 import { createStateAdapters, type StateAdapterDeps } from "@/lib/adapters/state";
 import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
+import { createInboxStore } from "@/lib/inbox-store";
 import type { InboxItem } from "@/lib/types";
 
 /** The firstmate pane discovery would resolve, so relay cards are answerable. */
@@ -140,16 +141,33 @@ describe("output-match adapter", () => {
     expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: RELAY_PANE } }]);
   });
 
-  it("leaves an output-match card unanswerable when no relay pane is reachable", async () => {
+  it("refreshes an existing output-match card when relay discovery changes", async () => {
+    let relayTarget: string | undefined;
+    let notifyRelayTargetChanged: (() => void) | undefined;
+    const store = createInboxStore(config.helmStateDir);
+    const updates: InboxItem[] = [];
+    store.subscribe((event) => { if (event.type === "item.upsert") updates.push(event.data as InboxItem); });
     server = createServer((socket) => { connection = socket; socket.once("data", () => {
       socket.write('{"result":{"type":"subscription_started"}}\n');
       socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
     }); });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
     config = { ...config, outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] };
-    await start(herdrAdapter("output-match", { relayTarget: () => undefined }));
-    await vi.waitUntil(() => emitted.length > 0);
-    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", respond: { channel: "none" } }]);
+    const adapter = herdrAdapter("output-match", {
+      relayTarget: () => relayTarget,
+      onRelayTargetChanged: (listener) => { notifyRelayTargetChanged = listener; return () => { notifyRelayTargetChanged = undefined; }; },
+    });
+    disposers.push(await adapter.start({ emit: (items) => store.reconcile("output-match", items), retract: () => undefined }));
+    await vi.waitUntil(() => store.listOpen().length === 1);
+    const initial = store.listOpen()[0]!;
+    expect(initial.respond).toEqual({ channel: "none" });
+    relayTarget = RELAY_PANE;
+    notifyRelayTargetChanged?.();
+    const refreshed = store.listOpen()[0]!;
+    expect(refreshed).toMatchObject({ id: initial.id, respond: { channel: "relay", target: RELAY_PANE } });
+    const updateCount = updates.length;
+    notifyRelayTargetChanged?.();
+    expect(updates).toHaveLength(updateCount);
   });
 
   it("uses the event source and emits every overlapping configured pattern", async () => {
