@@ -142,7 +142,7 @@ describe("output-match adapter", () => {
   });
 
   it("refreshes an existing output-match card when relay discovery changes", async () => {
-    let relayTarget: string | undefined;
+    const relay = { target: undefined as string | undefined };
     let notifyRelayTargetChanged: (() => void) | undefined;
     const store = createInboxStore(config.helmStateDir);
     const updates: InboxItem[] = [];
@@ -154,14 +154,14 @@ describe("output-match adapter", () => {
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
     config = { ...config, outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] };
     const adapter = herdrAdapter("output-match", {
-      relayTarget: () => relayTarget,
+      relayTarget: () => relay.target,
       onRelayTargetChanged: (listener) => { notifyRelayTargetChanged = listener; return () => { notifyRelayTargetChanged = undefined; }; },
     });
     disposers.push(await adapter.start({ emit: (items) => store.reconcile("output-match", items), retract: () => undefined }));
     await vi.waitUntil(() => store.listOpen().length === 1);
     const initial = store.listOpen()[0]!;
     expect(initial.respond).toEqual({ channel: "none" });
-    relayTarget = RELAY_PANE;
+    relay.target = RELAY_PANE;
     notifyRelayTargetChanged?.();
     const refreshed = store.listOpen()[0]!;
     expect(refreshed).toMatchObject({ id: initial.id, respond: { channel: "relay", target: RELAY_PANE } });
@@ -265,7 +265,7 @@ describe("agent-state adapter", () => {
   });
 
   it("refreshes an existing blocked-agent card when relay discovery changes", async () => {
-    let relayTarget: string | undefined;
+    const relay = { target: undefined as string | undefined };
     let notifyRelayTargetChanged: (() => void) | undefined;
     const herdr = join(root, "herdr-relay-refresh");
     writeFileSync(herdr, "#!/bin/sh\nprintf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-1\",\"agent_status\":\"blocked\",\"focused\":false}]}}'\n");
@@ -277,7 +277,7 @@ describe("agent-state adapter", () => {
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
     await start(herdrAdapter("agent-state", {
-      relayTarget: () => relayTarget,
+      relayTarget: () => relay.target,
       onRelayTargetChanged: (listener) => {
         notifyRelayTargetChanged = listener;
         return () => { notifyRelayTargetChanged = undefined; };
@@ -285,7 +285,7 @@ describe("agent-state adapter", () => {
     }));
     const initial = emitted.at(-1)![0]!;
     expect(initial).toMatchObject({ id: "agent-state:w1:p1", respond: { channel: "none" } });
-    relayTarget = RELAY_PANE;
+    relay.target = RELAY_PANE;
     notifyRelayTargetChanged?.();
     const refreshed = emitted.at(-1)![0]!;
     expect(refreshed).toMatchObject({ id: initial.id, respond: { channel: "relay", target: RELAY_PANE } });
