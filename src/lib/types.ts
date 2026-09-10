@@ -24,6 +24,12 @@ export type InboxItemKind =
   | "escalation"
   | "review"
   | "note"
+  /**
+   * An answer to a question the human asked, surfaced so it is not buried in
+   * the conversation it came back in. Read-only and dismissable: helm reports
+   * the answer, it never produces one.
+   */
+  | "answer"
   | "custom";
 
 /** How much the item wants the human. Drives sort order and notifications. */
@@ -88,6 +94,13 @@ export interface InboxItem {
   readonly title: string;
   readonly detail?: string;
   readonly about?: string;
+  /**
+   * Where the human can go to see the answer in full — a path, a PR, a URL.
+   *
+   * Provenance text only. It is rendered inert and is never fetched, executed,
+   * or resolved by helm.
+   */
+  readonly ref?: string;
   readonly options: readonly InboxOption[];
   readonly allowFreeform: boolean;
   readonly recommendValue?: string;
@@ -97,6 +110,14 @@ export interface InboxItem {
   /** ISO-8601 UTC instant the store first saw the item. */
   readonly openedAt: string;
   readonly answeredAt?: string;
+  /**
+   * The answer that was delivered, for display on a handled card.
+   *
+   * Set by the store when an answer is recorded, so a handled card can show
+   * WHAT was decided rather than only that it closed. Absent on an open card
+   * and on a dismissal, which delivers no answer.
+   */
+  readonly answer?: string;
 }
 
 /**

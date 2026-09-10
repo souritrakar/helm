@@ -212,7 +212,7 @@ describe.skipIf(SKIP_FM_CONTRACT)("live adapter inbox acceptance", () => {
 });
 
 function statusAdapter(config: HelmConfig) {
-  const adapter = createStateAdapters(config).find((entry) => entry.id === "status-decisions");
+  const adapter = createStateAdapters(config, { relayTarget: () => undefined }).find((entry) => entry.id === "status-decisions");
   if (adapter === undefined) throw new Error("missing status-decisions adapter");
   return adapter;
 }

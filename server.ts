@@ -26,21 +26,34 @@ import { z } from "zod";
 import { ConfigError, loadConfig } from "./src/lib/config";
 import { handleInboxHttp } from "./src/lib/inbox-http";
 import { createInboxRuntime } from "./src/lib/inbox-runtime";
+import { fleetOverview } from "./src/lib/fleet-view";
 import { allowedHostsForBind, requireOperator } from "./src/lib/require-operator";
-import { paneRun, paneSendKeys, type TerminalViewport } from "./src/lib/herdr";
+import { paneRun, paneSendKeys, paneSendText, type TerminalViewport } from "./src/lib/herdr";
 import { PaneDirectory, type PaneDiscovery } from "./src/lib/panes";
 import { parseTerminalInput, requestedViewport, TERMINAL_KEYS } from "./src/lib/request";
 import { TerminalBridge } from "./src/lib/terminal-bridge";
 
-const HERDR_KEY_NAMES: Record<(typeof TERMINAL_KEYS)[number], string> = { enter: "enter", escape: "esc", "c-c": "C-c" };
+/** helm's key names mapped to Herdr's spellings (`esc` is its canonical Escape). */
+const HERDR_KEY_NAMES: Record<(typeof TERMINAL_KEYS)[number], string> = {
+  enter: "enter",
+  escape: "esc",
+  "c-c": "C-c",
+  tab: "tab",
+  backspace: "backspace",
+  up: "up",
+  down: "down",
+  left: "left",
+  right: "right",
+};
 const paneIdSchema = z.string().min(1);
 
 /**
- * Either one-shot text (`herdr pane run`, which appends Enter) or exactly one
- * named key (`herdr pane send-keys`). Both together is ambiguous — the text
- * would silently never be sent — so it is rejected rather than half-honoured.
+ * Either one-shot text (`herdr pane run` when it submits, `pane send-text`
+ * when it does not) or exactly one named key (`herdr pane send-keys`). Both
+ * together is ambiguous — the text would silently never be sent — so it is
+ * rejected rather than half-honoured.
  */
-const INPUT_CONTRACT = `Terminal input must be {paneId, text} for one-shot text, or {paneId, key} where key is one of ${TERMINAL_KEYS.join(", ")}`;
+const INPUT_CONTRACT = `Terminal input must be {paneId, text, submit?} for one-shot text, or {paneId, key} where key is one of ${TERMINAL_KEYS.join(", ")}`;
 
 const colsSchema = z.number().int();
 const rowsSchema = z.number().int();
@@ -64,14 +77,19 @@ async function main(): Promise<void> {
   const dev = process.env.NODE_ENV !== "production";
   const allowedHosts = allowedHostsForBind(config.bind, config.port);
 
-  const inbox = createInboxRuntime(config);
+  let discovery: PaneDiscovery = { panes: [], defaultPaneId: null };
+
+  // A configured pane wins; otherwise relay follows the firstmate pane Herdr
+  // discovery found. Resolved per call, because discovery lands after start().
+  const inbox = createInboxRuntime(config, {
+    relayTarget: () => config.captainPane ?? discovery.panes.find((pane) => pane.isFirstmate)?.id,
+  });
   await inbox.start();
 
   const app = next({ dev, hostname: config.bind, port: config.port });
   const handle = app.getRequestHandler();
   await app.prepare();
 
-  let discovery: PaneDiscovery = { panes: [], defaultPaneId: null };
   const clients = new Set<TerminalClientState>();
 
   const attach = (client: TerminalClientState, paneId: string): void => {
@@ -128,6 +146,7 @@ async function main(): Promise<void> {
           responder: inbox.responder,
           allowedHosts,
           visibility: inbox.visibility,
+          fleet: () => fleetOverview(directory.tasks() ?? [], discovery.panes),
         });
         if (!owned) {
           await handle(req, res);
@@ -253,7 +272,9 @@ async function handleInput(req: IncomingMessage, res: ServerResponse, config: Re
     if (!knownPaneIds().has(input.paneId)) { respondJson(res, 404, { error: "Unknown pane" }); return; }
     const result = "key" in input
       ? await paneSendKeys(config, input.paneId, [HERDR_KEY_NAMES[input.key]])
-      : await paneRun(config, input.paneId, [input.text]);
+      : input.submit === false
+        ? await paneSendText(config, input.paneId, input.text)
+        : await paneRun(config, input.paneId, [input.text]);
     if (result.exitCode !== 0 || result.stdinError !== null) { respondJson(res, 502, { error: result.stderr.trim() || result.error || "Herdr rejected terminal input" }); return; }
     respondJson(res, 200, { ok: true });
   } catch (cause) { respondJson(res, 400, { error: cause instanceof z.ZodError ? INPUT_CONTRACT : cause instanceof Error ? cause.message : "Invalid terminal input" }); }

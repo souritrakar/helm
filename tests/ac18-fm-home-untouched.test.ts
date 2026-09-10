@@ -82,7 +82,7 @@ describe.skipIf(SKIP_FM_CONTRACT)("AC 18 FM_HOME is untouched", () => {
     const beforeState = checksumTree(join(fmHome, "state"));
     const beforeData = checksumTree(join(fmHome, "data"));
 
-    const runtime = createInboxRuntime(config);
+    const runtime = createInboxRuntime(config, { relayTarget: () => undefined });
     await runtime.start();
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       void handleInboxHttp(req, res, {

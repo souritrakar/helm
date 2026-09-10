@@ -1,158 +1,231 @@
 "use client";
 
 import { useState } from "react";
-import {
-  CircleAlert,
-  Clock3,
-  ShieldAlert,
-  Sparkles,
-} from "lucide-react";
+import { Check, CircleSlash, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { submitInboxResponse } from "@/lib/inbox-client";
-import type { InboxItem, InboxItemKind, InboxItemState, InboxUrgency } from "@/lib/types";
+import { dismissInboxItem, submitInboxResponse } from "@/lib/inbox-client";
+import { BUCKET_LABELS, bucketOf, controlFor } from "@/lib/inbox-view";
+import type { InboxItem, InboxUrgency } from "@/lib/types";
 
-const kindLabels: Record<InboxItemKind, string> = {
-  "status-decision": "Status decision",
-  decision: "Decision",
-  merge: "Merge",
-  credential: "Credential",
-  "captain-held": "Captain-held",
-  destructive: "Destructive",
-  irreversible: "Irreversible",
-  "security-sensitive": "Security-sensitive",
-  blocker: "Blocker",
-  escalation: "Escalation",
-  review: "Review",
-  note: "Note",
-  custom: "Custom",
+/**
+ * Urgency is carried by one dot, not a word.
+ *
+ * The list is already ordered by urgency, so a "blocking" badge on every card
+ * in the top band repeats what the position says. The dot keeps the signal
+ * scannable without spending a line of a phone screen on it.
+ */
+const URGENCY_DOT: Record<InboxUrgency, string> = {
+  blocking: "bg-red-500",
+  attention: "bg-amber-500",
+  fyi: "bg-zinc-400 dark:bg-zinc-600",
 };
 
-const urgencyStyles: Record<InboxUrgency, string> = {
-  blocking: "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-300",
-  attention: "border-amber-500/20 bg-amber-500/10 text-amber-800 dark:text-amber-200",
-  fyi: "border-sky-500/20 bg-sky-500/10 text-sky-800 dark:text-sky-200",
+const URGENCY_LABEL: Record<InboxUrgency, string> = {
+  blocking: "Blocking",
+  attention: "Needs attention",
+  fyi: "For information",
 };
 
-const stateStyles: Record<InboxItemState, string> = {
-  open: "border-emerald-500/20 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
-  answered: "border-border bg-muted text-muted-foreground",
-  dismissed: "border-border bg-muted text-muted-foreground",
-};
-
-const closedNotices: Record<Exclude<InboxItemState, "open">, string> = {
-  answered: "Answered. This card is read-only.",
-  dismissed: "Dismissed. This card is read-only.",
-};
-
-function Badge({ children, className }: { children: React.ReactNode; className: string }) {
-  return <span className={`inline-flex items-center rounded-full border px-2 py-1 text-sm/5 sm:text-xs/4 ${className}`}>{children}</span>;
-}
-
-function UrgencyIcon({ urgency }: { urgency: InboxUrgency }) {
-  const className = "mt-0.5 size-4 shrink-0";
-  if (urgency === "blocking") return <ShieldAlert className={`${className} text-red-600 dark:text-red-400`} />;
-  if (urgency === "attention") return <CircleAlert className={`${className} text-amber-600 dark:text-amber-400`} />;
-  return <Sparkles className={`${className} text-sky-600 dark:text-sky-400`} />;
-}
+/** Detail longer than this collapses behind a toggle so cards stay scannable. */
+const DETAIL_CLAMP_CHARS = 240;
 
 export function InboxCard({ item }: { item: InboxItem }) {
-  const closed = item.state !== "open";
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [replying, setReplying] = useState(false);
 
-  const send = async (action: { value: string } | { text: string }): Promise<void> => {
+  const control = controlFor(item);
+  const open = item.state === "open";
+  const detail = item.detail?.trim() ?? "";
+  const clamped = !expanded && detail.length > DETAIL_CLAMP_CHARS;
+
+  const act = async (
+    run: () => Promise<{ ok: boolean; error?: string }>,
+    failure: string,
+    success: string,
+  ): Promise<void> => {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const result = await submitInboxResponse(item.id, action);
+    const result = await run();
     if (!result.ok) {
-      const message = result.error ?? "The answer was not delivered";
+      const message = result.error ?? failure;
       setError(message);
-      toast.error("Answer was not delivered", { description: message });
+      toast.error(failure, { description: message });
       setBusy(false);
       return;
     }
-    toast.success("Answer delivered");
+    toast.success(success);
     setDraft("");
     setBusy(false);
   };
 
+  const answer = (action: { value: string } | { text: string }): void => {
+    void act(() => submitInboxResponse(item.id, action), "Answer was not delivered", "Answer delivered");
+  };
+  const dismiss = (): void => {
+    void act(() => dismissInboxItem(item.id), "Could not dismiss", "Dismissed");
+  };
+
   return (
     <article className="@container min-w-0" data-inbox-item-id={item.id}>
-      <div className="flex min-w-0 items-start gap-3">
-        <UrgencyIcon urgency={item.urgency} />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Badge className={urgencyStyles[item.urgency]}>{item.urgency}</Badge>
-            <Badge className={stateStyles[item.state]}>{item.state}</Badge>
-            <span className="font-mono text-sm text-muted-foreground sm:text-xs">{kindLabels[item.kind]}</span>
-          </div>
-          <h3 className="mt-2 text-base font-semibold text-pretty sm:text-sm">{item.title}</h3>
-          {item.detail !== undefined && item.detail !== "" && (
-            <p className="mt-1 text-base/7 text-pretty text-muted-foreground sm:text-sm/6">{item.detail}</p>
-          )}
-          <div className="mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
-            {item.repo !== undefined && item.repo !== "" && <span className="font-mono text-xs">{item.repo}</span>}
-            {item.taskId !== undefined && item.taskId !== "" && <span className="font-mono text-xs">{item.taskId}</span>}
-            {item.answeredAt !== undefined && (
-              <span className="flex items-center gap-1"><Clock3 className="size-4 shrink-0" />Answered</span>
-            )}
-          </div>
-          {item.state !== "open" && (
-            <p className="mt-3 text-base/7 text-pretty text-muted-foreground sm:text-sm/6">{closedNotices[item.state]}</p>
-          )}
-          {!closed && item.options.length > 0 && (
-            <div className="mt-4 flex min-w-0 flex-wrap gap-2">
-              {item.options.map((option) => (
-                <Button
-                  key={option.value}
-                  size="lg"
-                  variant="outline"
-                  disabled={busy}
-                  title={option.hint}
-                  onClick={() => void send({ value: option.value })}
-                >
-                  {option.label}
-                  {option.value === item.recommendValue && (
-                    <span className="ml-1.5 font-mono text-xs opacity-70">recommended</span>
-                  )}
-                </Button>
-              ))}
-            </div>
-          )}
-          {!closed && item.allowFreeform && (
-            <div className="mt-3 flex min-w-0 flex-col gap-2 @sm:flex-row">
-              <input
-                name={`response-${item.id}`}
-                value={draft}
-                disabled={busy}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && draft.trim() !== "") void send({ text: draft.trim() });
-                }}
-                placeholder="Write a response…"
-                aria-label={`Response for ${item.title}`}
-                className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-base outline-none focus-visible:outline-2 focus-visible:outline-offset-0 sm:text-sm"
-              />
-              <Button
-                size="lg"
-                variant="outline"
-                disabled={busy || draft.trim() === ""}
-                onClick={() => void send({ text: draft.trim() })}
-                className="shrink-0"
-              >
-                Send
-              </Button>
-            </div>
-          )}
-          {error !== null && (
-            <p className="mt-2 text-base/7 text-destructive sm:text-sm/6" role="alert">{error}</p>
+      <div className="flex min-w-0 items-baseline gap-2">
+        <span
+          aria-hidden="true"
+          className={`mt-1.5 size-2 shrink-0 rounded-full ${URGENCY_DOT[item.urgency]}`}
+        />
+        <span className="sr-only">{URGENCY_LABEL[item.urgency]}. </span>
+        <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {BUCKET_LABELS[bucketOf(item)]}
+        </span>
+      </div>
+
+      <h3 className="mt-1.5 text-pretty text-base font-semibold leading-snug">{item.title}</h3>
+
+      {detail !== "" && (
+        <div className="mt-1">
+          {/*
+            An answer card is the one place the body IS the payload — it is the
+            reply the human went looking for — so it reads as content rather
+            than as supporting detail.
+          */}
+          <p
+            className={
+              item.kind === "answer"
+                ? "mt-1.5 whitespace-pre-wrap text-pretty break-words rounded-md border-l-2 border-sky-500/50 bg-muted/50 px-3 py-2 text-sm/6"
+                : "whitespace-pre-wrap text-pretty break-words text-sm/6 text-muted-foreground"
+            }
+          >
+            {clamped ? `${detail.slice(0, DETAIL_CLAMP_CHARS).trimEnd()}…` : detail}
+          </p>
+          {(clamped || expanded) && (
+            <button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              className="mt-1 text-sm font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              {expanded ? "Show less" : "Show more"}
+            </button>
           )}
         </div>
-      </div>
+      )}
+
+      {/* Provenance only — rendered as inert text, never a link helm resolves. */}
+      {item.ref !== undefined && item.ref !== "" && (
+        <p className="mt-1.5 truncate font-mono text-xs text-muted-foreground" title={item.ref}>
+          {item.ref}
+        </p>
+      )}
+
+      {!open && <Outcome item={item} />}
+
+      {open && (control === "options" || control === "both") && (
+        <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+          {item.options.map((option) => (
+            <Button
+              key={option.value}
+              size="lg"
+              variant={option.value === item.recommendValue ? "default" : "outline"}
+              disabled={busy}
+              title={option.hint}
+              onClick={() => answer({ value: option.value })}
+              className="min-w-24 flex-1 @sm:flex-none"
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {/*
+        When the card declares options, those ARE the answer — one tap. A typed
+        reply is the exception, so it hides behind a link instead of adding a
+        text field to every approval and halving how many fit on a phone.
+      */}
+      {open && control === "both" && !replying && (
+        <button
+          type="button"
+          onClick={() => setReplying(true)}
+          className="mt-2 text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        >
+          Write a reply instead
+        </button>
+      )}
+
+      {open && (control === "text" || (control === "both" && replying)) && (
+        <div className="mt-2 flex min-w-0 flex-col gap-2 @sm:flex-row">
+          <input
+            name={`response-${item.id}`}
+            value={draft}
+            disabled={busy}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && draft.trim() !== "") answer({ text: draft.trim() });
+            }}
+            autoFocus={control === "both"}
+            placeholder="Write a reply…"
+            aria-label={`Reply to ${item.title}`}
+            className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-base outline-none focus-visible:outline-2 focus-visible:outline-offset-0 sm:text-sm"
+          />
+          <Button
+            size="lg"
+            variant="outline"
+            disabled={busy || draft.trim() === ""}
+            onClick={() => answer({ text: draft.trim() })}
+            className="shrink-0"
+          >
+            Send
+          </Button>
+        </div>
+      )}
+
+      {open && (
+        <div className="mt-2 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={dismiss}
+            disabled={busy}
+            className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+          >
+            Dismiss
+          </button>
+          {/*
+            Only worth saying when the human might reasonably expect a control.
+            An answer card is a report — there is nothing to reply to — so the
+            notice would be noise there.
+          */}
+          {control === "none" && item.kind !== "answer" && (
+            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <CircleSlash className="size-3.5 shrink-0" aria-hidden="true" />
+              No reply channel
+            </span>
+          )}
+        </div>
+      )}
+
+      {error !== null && (
+        <p className="mt-2 text-sm/6 text-destructive" role="alert">{error}</p>
+      )}
     </article>
+  );
+}
+
+/** What happened to a handled card, read-only. */
+function Outcome({ item }: { item: InboxItem }) {
+  const dismissed = item.state === "dismissed";
+  const Icon = dismissed ? X : Check;
+  return (
+    <p
+      className={`mt-2 flex min-w-0 items-baseline gap-1.5 text-sm/6 ${dismissed ? "text-muted-foreground" : "text-emerald-700 dark:text-emerald-400"}`}
+    >
+      <Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 break-words">
+        {dismissed ? "Dismissed" : item.answer === undefined ? "Answered" : `Answered: ${item.answer}`}
+      </span>
+    </p>
   );
 }

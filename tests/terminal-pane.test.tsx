@@ -115,7 +115,7 @@ describe("TerminalPane banners", () => {
     act(() => {
       socket.onclose?.();
     });
-    expect(screen.getByText("Disconnected")).toBeTruthy();
+    expect(screen.getByText("Offline")).toBeTruthy();
     expect(screen.queryByText("connected")).toBeNull();
     expect(screen.queryByText("resized")).toBeNull();
     expect(screen.queryByText("pane-switched")).toBeNull();
@@ -127,7 +127,7 @@ describe("TerminalPane banners", () => {
     act(() => {
       deliver(socket, { type: "terminal.status", status: "closed", reason: "observer exited" });
     });
-    expect(screen.getByText("Disconnected")).toBeTruthy();
+    expect(screen.getByText("Offline")).toBeTruthy();
     expect(screen.getByText("observer exited")).toBeTruthy();
   });
 
@@ -206,9 +206,9 @@ describe("TerminalPane banners", () => {
         selectedPaneId: "w1:p1",
       });
     });
-    fireEvent.change(screen.getByPlaceholderText("Converse with this pane…"), { target: { value: "hello" } });
+    fireEvent.change(screen.getByPlaceholderText("Type to this pane…"), { target: { value: "hello" } });
     await act(async () => {
-      fireEvent.submit(screen.getByPlaceholderText("Converse with this pane…").closest("form")!);
+      fireEvent.submit(screen.getByPlaceholderText("Type to this pane…").closest("form")!);
     });
     expect(screen.getByText("Unknown pane")).toBeTruthy();
     act(() => {

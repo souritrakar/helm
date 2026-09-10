@@ -40,8 +40,43 @@ These are not style preferences. Each one protects something that fails silently
 6. **No Herdr lifecycle control.** helm observes, sends text, and reads. It never starts, stops,
    restarts, or deletes a session, workspace, or pane.
 
+### The cockpit surface — three traps that fail silently
+
+1. **The shell must be height-BOUNDED (`h-dvh`, never `min-h-dvh`).** xterm's fit addon
+   measures its own box to choose a row count, so a content-driven height is a feedback
+   loop: the terminal grew to 34000px and 2380 rows, which is what made the mirror look
+   garbled and dead. `src/components/helm-shell.tsx` carries the constraint and the reason.
+2. **Never hand xterm a CSS `var()` font.** It measures one character cell and grids every
+   glyph on it, so a `var()` it cannot resolve while measuring yields a cell from a different
+   face than it paints — and xterm hides the mismatch with per-character `letter-spacing`,
+   which reads as overlapping text. Use the concrete stack in `terminal-pane.tsx`.
+3. **Nothing browser-only may be read during render** — not `EventSource`, not
+   `Notification.permission`. The server and the first client render disagree, hydration
+   fails, and React rebuilds the tree, taking the terminal and its WebSocket with it. Probe
+   inside an effect, or use `useSyncExternalStore` with a server snapshot
+   (`inbox-notifications.tsx`).
+
+One page load checks all three: `document.body.scrollHeight === innerHeight`, the xterm row
+count is tens rather than thousands, no row span carries a `letter-spacing`, console empty.
+
 ### Shape decisions worth knowing
 
+- **Inbox presentation is `src/lib/inbox-view.ts`** — bucket, tab, display order, and which
+  response control a card renders. It is pure and shared, so the tab counts, the sort, and
+  the card label cannot disagree. Buckets are the three things helm exists to surface
+  (decisions, approvals, answers) plus info.
+- **Answer cards** read `$FM_HOME/state/answers/*.json` (`{id,question,answer,ref?,ts}`);
+  firstmate writes them, helm only renders them read-only. Contract, validation, and the
+  skip-and-report rule live in `src/lib/adapters/answers.ts`; fixtures in
+  `tests/fixtures/answers/`.
+- **Fleet view** is `src/lib/fleet-view.ts` + `GET /api/fleet`. It reads `PaneDirectory`'s
+  CACHED snapshot — `fm-fleet-snapshot.sh` budgets up to 180s, so never run the seam per
+  request.
+- **The relay target is resolved, not configured.** `server.ts` passes
+  `relayTarget: () => config.captainPane ?? <discovered firstmate pane>` into the runtime,
+  and adapters call it at EMIT time — discovery lands after `start()`, so resolving once up
+  front pins every relay card to `channel: "none"` and silently makes its button a no-op.
+  A card with no reachable pane renders read-only rather than offering a dead control.
 - helm runs a **custom Node server** (`server.ts`), not `next start`, because it serves a
   long-lived WebSocket carrying a terminal stream. The custom server and terminal WebSocket
   surface are documented in `README.md`; the scaffold uses Next 16 (current release);
@@ -76,10 +111,21 @@ These are not style preferences. Each one protects something that fails silently
 - **Answered history** is permanent for the life of the process data dir. Adapters (Lane D) must
   use a **per-occurrence** natural key so a recurring condition raises a new card id rather than
   staying suppressed forever (captain decision `answered-history-unbounded-and-permanent`: defer
-  prune/TTL).
+  prune/TTL). The history file is version 2 and stores the card BODY plus the answer, so the
+  Answered / Dismissed tabs still render after a restart; a version-1 file still loads and
+  still suppresses, but its records cannot be displayed. `captureSnapshot` replays handled
+  cards while `snapshot.begin` names only the OPEN ids, so a handled card can never re-enter
+  the open set. `POST /api/inbox/:id/dismiss` closes a card locally and calls no firstmate seam.
 - **All Herdr access lives in `src/lib/herdr.ts`**, so a Herdr upgrade is a one-file change.
   `herdrDoctor` pins the minimum socket protocol and proves the Unix-socket listener is Herdr
   at that protocol (a connectable socket is not enough).
+- **Terminal input:** `pane run` submits a line (text + Enter), `pane send-text` types without
+  Enter, `pane send-keys` sends one named key. helm still sends whole lines plus a bounded key
+  set — never a raw byte stream. Herdr 0.8.2 accepts `enter, esc, tab, backspace, up, down,
+  left, right, C-c` and REJECTS `home, end, delete, C-d, C-a, C-u`, so `TERMINAL_KEYS` in
+  `src/lib/request.ts` stops at what Herdr will take. The mirror is read-only (`disableStdin`),
+  and clicking it focuses the composer — otherwise a keystroke aimed at it lands nowhere and
+  reads as dead input.
 - **Service launcher is `bin/helm`.** With a live pidfile, doctor treats the configured
   bind:port as healthy only when a listener on that exact bind belongs to that process group
   (a free port or a foreign listener is a failure). `start` launches with argv-only

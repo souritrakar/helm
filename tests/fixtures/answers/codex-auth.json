@@ -1,0 +1,7 @@
+{
+  "id": "codex-auth",
+  "question": "Give me the codex auth link I can access",
+  "answer": "The login server is live on localhost:1455. Open the authorize URL on the laptop — the callback is loopback-only, so it cannot complete from the phone.",
+  "ref": "w1:p5 · firstmate pane",
+  "ts": "2026-09-10T20:41:00Z"
+}

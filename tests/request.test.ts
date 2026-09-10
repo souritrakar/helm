@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_VIEWPORT, parseTerminalInput, requestedViewport } from "@/lib/request";
+import { DEFAULT_VIEWPORT, parseTerminalInput, requestedViewport, TERMINAL_KEYS } from "@/lib/request";
 
 describe("requestedViewport", () => {
   it("takes the geometry the viewer connected with", () => {
@@ -38,5 +38,32 @@ describe("parseTerminalInput", () => {
     expect(() => parseTerminalInput({ paneId: "w1:p1", text: "one\ttwo" })).toThrow(/single line/);
     expect(() => parseTerminalInput({ paneId: "w1:p1", text: "bell\u0007" })).toThrow(/single line/);
     expect(() => parseTerminalInput({ paneId: "w1:p1", text: "del\u007f" })).toThrow(/single line/);
+  });
+
+  it("carries submit:false, which types the line without committing it", () => {
+    expect(parseTerminalInput({ paneId: "w1:p1", text: "half typed", submit: false })).toEqual({
+      paneId: "w1:p1",
+      text: "half typed",
+      submit: false,
+    });
+  });
+
+  it.each(TERMINAL_KEYS)("accepts the bounded key %s", (key) => {
+    expect(parseTerminalInput({ paneId: "w1:p1", key })).toEqual({ paneId: "w1:p1", key });
+  });
+
+  it("refuses a key outside the bounded set rather than passing it to Herdr", () => {
+    // Herdr rejects these names, so helm refuses them where it can explain why.
+    for (const key of ["home", "end", "delete", "c-d", "c-u", "f13"]) {
+      expect(() => parseTerminalInput({ paneId: "w1:p1", key })).toThrow();
+    }
+  });
+
+  it("refuses text and a key together, which would silently drop the text", () => {
+    expect(() => parseTerminalInput({ paneId: "w1:p1", text: "hello", key: "enter" })).toThrow();
+  });
+
+  it("refuses an unknown field, so a typo cannot be read as a default", () => {
+    expect(() => parseTerminalInput({ paneId: "w1:p1", text: "hello", sumbit: false })).toThrow();
   });
 });

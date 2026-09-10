@@ -12,6 +12,9 @@ import { createStateAdapters } from "@/lib/adapters/state";
 import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
 import type { InboxItem } from "@/lib/types";
 
+/** The firstmate pane discovery would resolve, so relay cards are answerable. */
+const RELAY_PANE = "w1:p1";
+
 let root = "";
 let config: HelmConfig;
 let emitted: InboxItem[][];
@@ -31,14 +34,14 @@ afterEach(() => { for (const disposer of disposers) disposer[Symbol.dispose](); 
 async function start(adapter: ReturnType<typeof createStateAdapters>[number] | ReturnType<typeof createHerdrAdapters>[number]): Promise<void> {
   disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
 }
-function stateAdapter(id: string) { return createStateAdapters(config).find((adapter) => adapter.id === id)!; }
+function stateAdapter(id: string) { return createStateAdapters(config, { relayTarget: () => RELAY_PANE }).find((adapter) => adapter.id === id)!; }
 
 describe("state record adapters", () => {
-  it("registers all eight production sources exactly once", () => {
+  it("registers all nine production sources exactly once", () => {
     const registry = createAdapterRegistry();
-    registerProductionAdapters(registry, config);
+    registerProductionAdapters(registry, config, { relayTarget: () => RELAY_PANE });
     expect(registry.list().map((adapter) => adapter.id)).toEqual([
-      "status-decisions", "captain-holds", "bearings", "captain-notes", "steering-backlog", "procevent", "agent-state", "output-match",
+      "status-decisions", "captain-holds", "bearings", "captain-notes", "steering-backlog", "procevent", "answers", "agent-state", "output-match",
     ]);
   });
 
@@ -46,7 +49,7 @@ describe("state record adapters", () => {
     const inbox = join(config.fmStateDir, "inbox"); mkdirSync(inbox);
     const note = join(inbox, "n-1.note"); writeFileSync(note, "id=n-1\nat=2026-09-07T00:00:00Z\n--\n<em>untrusted</em> ; $(nope)");
     await start(stateAdapter("captain-notes"));
-    expect(emitted.at(-1)).toMatchObject([{ id: "captain-notes:n-1", detail: expect.stringContaining("$(nope)"), respond: { channel: "none" }, evidence: [{ path: note }] }]);
+    expect(emitted.at(-1)).toMatchObject([{ id: "captain-notes:n-1", detail: expect.stringContaining("$(nope)"), respond: { channel: "relay", target: RELAY_PANE }, evidence: [{ path: note }] }]);
     expect(() => stat(note)).not.toThrow();
   });
 
@@ -73,11 +76,11 @@ describe("state record adapters", () => {
     const script = join(config.fmBinDir, "fm-fleet-snapshot.sh");
     writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' '{\"schema\":\"fm-fleet-snapshot.v1\",\"generated\":\"2026-09-07T00:00:00Z\",\"fm_home\":\"fixture\",\"roots\":{\"fm_root\":\"/fixture\",\"state\":\"/fixture/state\",\"data\":\"/fixture/data\",\"config\":\"/fixture/config\",\"projects\":\"/fixture/projects\"},\"backlog\":{\"path\":\"/fixture/backlog\",\"present\":true,\"records\":[{\"order\":1,\"state\":\"held\",\"raw\":\"inert\",\"structured\":true,\"id\":\"held-1\",\"title\":\"Approve release\",\"repo\":null,\"kind\":null,\"hold_kind\":null,\"hold_reason\":\"Awaiting captain\",\"hold_until\":null,\"blocked_by_ids\":[],\"unresolved_blocker_ids\":[],\"current_role\":null,\"captain_actionable\":true,\"deferred_marker\":false,\"pr_url\":null}]},\"tasks\":[],\"main_inventory\":{\"valid\":true,\"reason\":null,\"orphan_in_flight\":[],\"unstructured_current_count\":0}}'\n");
     chmodSync(script, 0o755);
-    config = { ...config, captainPane: "w1:captain" };
     await start(stateAdapter("captain-holds"));
     expect(emitted.at(-1)).toMatchObject([{
       id: "captain-holds:held-1", kind: "captain-held", urgency: "blocking", taskId: "held-1",
-      title: "Approve release", detail: "Awaiting captain", respond: { channel: "relay", target: "w1:captain" },
+      title: "Approve release", detail: "Awaiting captain", respond: { channel: "relay", target: RELAY_PANE },
+      options: [{ value: "approve" }, { value: "deny" }], allowFreeform: true,
     }]);
   });
 
@@ -91,13 +94,25 @@ describe("state record adapters", () => {
     expect(() => stat(`${result.slice(0, -7)}.handled`)).toThrow();
   });
 
-  it("relays sensitive bearings gates to the configured firstmate pane", async () => {
+  it("relays sensitive bearings gates to the resolved firstmate pane as an approval", async () => {
     const script = join(config.fmBinDir, "fm-bearings-snapshot.sh");
     writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' '{\"schema\":\"fm-bearings.v1\",\"home\":\"fixture\",\"generated\":\"2026-09-07T00:00:00Z\",\"in_flight\":[],\"decisions_open\":[],\"gates\":[{\"id\":\"deploy\",\"title\":\"Merge deploy\",\"blocked_by\":\"main\",\"reason\":\"merge approval required\",\"owner\":\"captain\"}],\"landed\":[],\"reports\":[],\"omitted\":[]}'\n");
     chmodSync(script, 0o755);
-    config = { ...config, captainPane: "w1:captain" };
     await start(stateAdapter("bearings"));
-    expect(emitted.at(-1)).toMatchObject([{ kind: "merge", respond: { channel: "relay", target: "w1:captain" } }]);
+    expect(emitted.at(-1)).toMatchObject([{
+      kind: "merge", respond: { channel: "relay", target: RELAY_PANE },
+      options: [{ value: "approve" }, { value: "deny" }],
+    }]);
+  });
+
+  it("leaves a relay card unanswerable when no firstmate pane is reachable", async () => {
+    const script = join(config.fmBinDir, "fm-bearings-snapshot.sh");
+    writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' '{\"schema\":\"fm-bearings.v1\",\"home\":\"fixture\",\"generated\":\"2026-09-07T00:00:00Z\",\"in_flight\":[],\"decisions_open\":[],\"gates\":[{\"id\":\"deploy\",\"title\":\"Merge deploy\",\"blocked_by\":\"main\",\"reason\":\"merge approval required\",\"owner\":\"captain\"}],\"landed\":[],\"reports\":[],\"omitted\":[]}'\n");
+    chmodSync(script, 0o755);
+    const adapter = createStateAdapters(config, { relayTarget: () => undefined }).find((entry) => entry.id === "bearings")!;
+    await start(adapter);
+    // Better an honest read-only card than a control whose answer goes nowhere.
+    expect(emitted.at(-1)).toMatchObject([{ kind: "merge", respond: { channel: "none" } }]);
   });
 });
 
