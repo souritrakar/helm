@@ -109,16 +109,18 @@ compensation. Only a value large enough to see is the font-measurement mismatch 
   Light is the primary theme. Chrome never wears the filled `default` button variant — the
   strongest mark on screen belongs to a card's answer, not to a view toggle — and an engaged
   toggle is marked with the accent as a TINT.
-- **A status surface is a `*-tint` token, never `bg-<hue>/12`.** An alpha of the hue only works
-  in one theme direction: over a white card it darkens and contrast holds, but over a DARK card
-  the same tint LIGHTENS it toward the already-light dark-mode hue — `urgency-blocking` on its
-  own 12% tint measured 3.79:1, under AA, while looking correct in light mode. The fix is a
-  tonal container per theme (`urgency-blocking-tint`, `success-tint`, `primary-tint`, …), and a
-  filled status badge needs an on-hue ink token too — `text-white` on the dark-mode red is
-  2.89:1. `tests/design-tokens-contrast.test.ts` reads the real values out of `globals.css`,
-  proves both themes at AA, and fails the banned `bg-<hue>/<alpha>` form, so this is enforced
-  rather than remembered. Do not hand-check it in the browser: `getComputedStyle` returns
-  `oklch()`/`lab()`, so an in-page contrast probe silently reports nonsense.
+- **A status or UI surface that carries text uses a named `*-tint` token, not `bg-<hue>/<alpha>`.**
+  An alpha is fine for a non-text mark — a grip, divider, border, or ring — but on a text surface
+  it only works in one theme direction: over a white card it darkens and contrast holds, while
+  over a DARK card the same tint LIGHTENS toward the already-light dark-mode hue —
+  `urgency-blocking` on its own 12% tint measured 3.79:1, under AA, while looking correct in
+  light mode. The fix is a tonal container per theme (`urgency-blocking-tint`, `success-tint`,
+  `primary-tint`, …), and a filled status badge needs an on-hue ink token too — `text-white` on
+  the dark-mode red is 2.89:1. `tests/design-tokens-contrast.test.ts` reads the real values out
+  of `globals.css` and proves the token values at AA in both themes. The text-carrying-surface
+  rule is a documented convention rather than a source-scanning test. Do not hand-check it in
+  the browser: `getComputedStyle` returns `oklch()`/`lab()`, so an in-page contrast probe silently
+  reports nonsense.
 - **Motion is affordance, never decoration**, so `globals.css` neutralises all of it under
   `prefers-reduced-motion` in one `@layer base` rule. Per-component `motion-reduce:` classes are
   belt-and-braces on top of that, not the mechanism.
