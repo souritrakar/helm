@@ -268,7 +268,7 @@ function LeftPanel({
 
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-col bg-background">
-      <div className="flex min-w-0 shrink-0 items-center gap-2 border-b bg-card px-3 py-2 sm:px-4">
+      <div className="flex min-w-0 shrink-0 items-center gap-1.5 border-b bg-card px-3 py-2 sm:px-4">
         <div className="flex shrink-0 gap-0.5 rounded-lg bg-muted p-0.5" role="group" aria-label="Panel">
           <ViewButton label="Inbox" active={view === "inbox"} onSelect={() => setView("inbox")} />
           <ViewButton label="Fleet" active={view === "fleet"} onSelect={() => setView("fleet")} />
@@ -279,6 +279,7 @@ function LeftPanel({
               tab={OPEN_TAB}
               active={tab === "open"}
               count={status === "ready" ? counts.open : null}
+              narrowCompact
               onSelect={() => setTab("open")}
             />
             {/* Pushes history to the far edge, away from the live work. */}
@@ -425,12 +426,14 @@ function TabButton({
   active,
   count,
   compact = false,
+  narrowCompact = false,
   onSelect,
 }: {
   tab: TabSpec;
   active: boolean;
   count: number | null;
   compact?: boolean;
+  narrowCompact?: boolean;
   onSelect(): void;
 }) {
   return (
@@ -445,14 +448,14 @@ function TabButton({
       // A compact tab trims its side padding rather than its height: at 390px
       // the three tabs plus the panel switch overflowed the row by 7px, and the
       // 44px tap target is the one dimension that must not pay for it.
-      className={`shrink-0 ${compact ? "px-2.5" : ""} ${
+      className={`shrink-0 ${compact || narrowCompact ? "px-2.5" : ""} ${
         active
           ? "bg-primary-tint font-medium text-primary hover:bg-primary-tint-hover hover:text-primary"
           : "text-muted-foreground"
       }`}
     >
       <tab.Icon className="size-4 shrink-0" aria-hidden="true" />
-      <span className={compact ? "sr-only sm:not-sr-only" : ""}>{tab.label}</span>
+      <span className={compact ? "sr-only sm:not-sr-only" : narrowCompact ? "sr-only min-[400px]:not-sr-only" : ""}>{tab.label}</span>
       {count !== null && (
         <span
           className={`font-mono tabular-nums ${

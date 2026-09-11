@@ -444,10 +444,14 @@ export function InboxCard({ item }: { item: InboxItem }) {
                   No reply channel
                 </Badge>
               )}
-              {/* Provenance only — rendered as inert text, never a link helm resolves. */}
+              {/*
+                `ref` is text firstmate authors per ask/answer record; helm never
+                synthesizes or resolves it. Mono made it read as raw debug output,
+                so meta prose preserves the channel without that noise.
+              */}
               {hasRef && (
                 <span
-                  className="min-w-0 truncate font-mono text-meta text-muted-foreground"
+                  className="min-w-0 truncate text-meta text-muted-foreground"
                   title={item.ref}
                 >
                   {item.ref}
