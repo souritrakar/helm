@@ -77,16 +77,11 @@ count is tens rather than thousands, no row span carries a `letter-spacing`, con
   [`docs/architecture.md`](docs/architecture.md#two-halves-of-the-same-conversation) and
   [`docs/architecture.md`](docs/architecture.md#add-to-terminal); keep their source contracts,
   one-line pane constraint, and adapter guidance there rather than copying them here.
-  One rule from there is load-bearing enough to repeat: an added card is a **chip ABOVE** the
-  composer, never text inside it. Several hundred characters in a one-line input scroll the
-  human's own words out of sight, and the field stops reading as a composer.
-- **A blocked pane is not a blocked agent.** Herdr's `blocked` only means "waiting for input",
-  which a torn-down worker's leftover shell also is. `agent-state` reads the pane's last visible
-  line (`paneLastLine` + `isShellPromptLine`) to tell them apart, and an unrecognised line KEEPS
-  its card — a missing blocker is worse than a noisy one. The terminal title is NOT evidence: a
-  live, genuinely blocked `codex` shows the shell's own `user@host:cwd` title, so filtering on it
-  drops real blockers. `herdr pane read` also has no `--json` envelope, unlike the list seams —
-  see [`docs/adapters.md`](docs/adapters.md#why-agent-state-reads-the-pane-before-it-raises-a-blocker).
+- **Terminal context stays a chip above the composer.** The full contract, including focus and
+  one-line send behavior, is owned by [`docs/architecture.md`](docs/architecture.md#add-to-terminal).
+- **A blocked pane is not necessarily a blocked agent.** Keep unrecognised last visible lines
+  surfaced; the predicate and Herdr text-read contract are owned by
+  [`docs/adapters.md`](docs/adapters.md#why-agent-state-reads-the-pane-before-it-raises-a-blocker).
 - **A card must never hide what the human needs to act on.** Titles wrap and are never clipped;
   bodies collapse behind a CSS line clamp with "Show more", so the full text stays in the DOM.
   Adapters must pass the full title and body through: firstmate spells "no value" as a literal
