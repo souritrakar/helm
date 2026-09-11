@@ -30,6 +30,14 @@ export type InboxItemKind =
    * the answer, it never produces one.
    */
   | "answer"
+  /**
+   * A question firstmate is asking the captain — the inverse of `answer`.
+   *
+   * Without this card the question only exists in the pane it was typed into,
+   * which is the burial helm exists to prevent. Answerable: the reply relays
+   * into the firstmate pane like any other freeform instruction.
+   */
+  | "ask"
   | "custom";
 
 /** How much the item wants the human. Drives sort order and notifications. */

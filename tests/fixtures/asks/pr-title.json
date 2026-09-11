@@ -1,0 +1,6 @@
+{
+  "id": "pr-title",
+  "question": "Should the helm inbox v2 PR land as one PR, or split into three?",
+  "context": "The branch now touches the context block, the ask adapter, and the whole inbox visual layer. It is about 900 lines. You said to tell you if it grew unreviewable.",
+  "ts": "2026-09-10T21:20:00Z"
+}

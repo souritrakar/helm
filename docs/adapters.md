@@ -216,6 +216,7 @@ Verify against `src/lib/adapters/state.ts` and
 | `steering-backlog` | `state/<id>.inbox/*.msg` | `note`, fyi | `none` |
 | `procevent` | `state/procevent-inbox/*.result` without `.handled` | `review`, attention | `none`. Classify only. Never auto-apply. |
 | `answers` | `state/answers/*.json` | `answer`, attention | `none`. Read-only answer records; the operator may dismiss them locally. |
+| `asks` | `state/asks/*.json` | `ask`, blocking | `relay` to the configured or discovered firstmate pane, or `none`. Each `options` entry is relayed verbatim; `allowFreeform` is always true. |
 | `agent-state` | live blocked Herdr agents | `blocker`, blocking | `relay` or `none` |
 | `output-match` | configured matches | `custom` | `relay` or `none` |
 

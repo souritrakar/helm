@@ -9,12 +9,13 @@ import type { FleetHealth, FleetMember, FleetOverview } from "@/lib/fleet-view";
 /** How often the overview is refreshed. The payload is a cached projection. */
 const POLL_MS = 5_000;
 
+/** Indexes the same status tokens the inbox urgency dots use (`globals.css`). */
 const HEALTH_DOT: Record<FleetHealth, string> = {
-  blocked: "bg-red-500",
-  working: "bg-emerald-500",
-  done: "bg-sky-500",
-  idle: "bg-zinc-400 dark:bg-zinc-600",
-  unknown: "bg-zinc-300 dark:bg-zinc-700",
+  blocked: "bg-urgency-blocking",
+  working: "bg-success",
+  done: "bg-info",
+  idle: "bg-urgency-quiet",
+  unknown: "border border-urgency-quiet",
 };
 
 const HEALTH_LABEL: Record<FleetHealth, string> = {
@@ -66,7 +67,7 @@ export function FleetPanel() {
     return (
       <div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 p-6 text-center">
         <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
-        <p className="text-sm/6 text-muted-foreground">Reading the fleet.</p>
+        <p className="text-body text-muted-foreground">Reading the fleet.</p>
       </div>
     );
   }
@@ -74,19 +75,19 @@ export function FleetPanel() {
   if (status === "error" || overview === null) {
     return (
       <div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 p-6 text-center">
-        <CircleX className="size-5 text-destructive" />
-        <h3 className="text-sm font-semibold">Fleet state unavailable</h3>
-        <p className="max-w-[34ch] text-pretty text-sm/6 text-muted-foreground">{error}</p>
-        <Button variant="outline" size="lg" onClick={retry}>Retry</Button>
+        <CircleX className="size-6 text-destructive" />
+        <h3 className="text-title font-semibold">Fleet state unavailable</h3>
+        <p className="max-w-[48ch] text-pretty text-body text-muted-foreground">{error}</p>
+        <Button variant="default" size="touch" onClick={retry}>Retry</Button>
       </div>
     );
   }
 
   if (overview.members.length === 0) {
     return (
-      <div className="flex h-full min-h-60 flex-col items-center justify-center gap-2 p-6 text-center">
-        <Ship className="size-5 text-muted-foreground" />
-        <p className="max-w-[34ch] text-pretty text-sm/6 text-muted-foreground">No tasks are in flight.</p>
+      <div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 p-6 text-center">
+        <Ship className="size-6 text-muted-foreground" />
+        <p className="max-w-[42ch] text-pretty text-body text-muted-foreground">No tasks are in flight.</p>
       </div>
     );
   }
@@ -96,11 +97,11 @@ export function FleetPanel() {
   return (
     <div className="min-w-0">
       {active.length > 0 && (
-        <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-1 border-b px-3 py-2.5 sm:px-4">
+        <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-1 border-b px-3 py-2 sm:px-4">
           {active.map((health) => (
-            <span key={health} className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <span key={health} className="flex items-center gap-1.5 text-ui text-muted-foreground">
               <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${HEALTH_DOT[health]}`} />
-              <span className="font-mono tabular-nums text-foreground">{overview.counts[health]}</span>
+              <span className="font-mono font-semibold tabular-nums text-foreground">{overview.counts[health]}</span>
               {HEALTH_LABEL[health]}
             </span>
           ))}
@@ -119,29 +120,34 @@ export function FleetPanel() {
 
 function FleetRow({ member }: { member: FleetMember }) {
   return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 items-baseline gap-2">
-        <span
-          aria-hidden="true"
-          className={`mt-1.5 size-2 shrink-0 rounded-full ${HEALTH_DOT[member.health]}`}
-        />
-        <span className="sr-only">{HEALTH_LABEL[member.health]}. </span>
-        <h3 className="min-w-0 flex-1 truncate text-sm font-semibold" title={member.title}>
+    // `pl-4` is the dot gutter: size-2 + gap-2. Change one and change all three.
+    <div className="relative min-w-0 pl-4">
+      <span
+        aria-hidden="true"
+        className={`absolute left-0 top-[0.3rem] size-2 shrink-0 rounded-full ${HEALTH_DOT[member.health]}`}
+      />
+      <span className="sr-only">{HEALTH_LABEL[member.health]}. </span>
+      <div className="flex min-w-0 items-start gap-2">
+        {/*
+          Wraps to two lines rather than clipping. A task title is often a whole
+          brief, and a single-line ellipsis hides the words that identify it.
+        */}
+        <h3 className="min-w-0 flex-1 text-pretty break-words text-ui font-semibold [-webkit-box-orient:vertical] [display:-webkit-box] [-webkit-line-clamp:2] overflow-hidden">
           {member.title}
         </h3>
         {member.needsYou && (
-          <span className="shrink-0 rounded-full bg-red-600 px-2 py-0.5 text-xs font-medium text-white">
+          <span className="shrink-0 rounded-full bg-urgency-blocking px-2 py-0.5 text-meta font-medium text-white">
             Needs you
           </span>
         )}
       </div>
       {member.doing !== undefined && (
-        <p className="mt-0.5 truncate pl-4 text-sm text-muted-foreground" title={member.doing}>
+        <p className="mt-1 text-pretty break-words text-ui text-muted-foreground [-webkit-box-orient:vertical] [display:-webkit-box] [-webkit-line-clamp:2] overflow-hidden">
           {member.doing}
         </p>
       )}
       {(member.repo !== undefined || member.stale) && (
-        <p className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 pl-4 text-xs text-muted-foreground">
+        <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 text-meta text-muted-foreground">
           {member.repo !== undefined && member.repo !== "" && <span className="truncate font-mono">{member.repo}</span>}
           {/* Says the reading itself may be out of date — not that the task is. */}
           {member.stale && <span>reading may be stale</span>}

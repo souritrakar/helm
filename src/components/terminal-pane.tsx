@@ -6,6 +6,9 @@ import "@xterm/xterm/css/xterm.css";
 import { ChevronDown, CornerDownLeft, Send, WifiOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { onTerminalContext } from "@/components/terminal-composer";
+import { appendContext } from "@/lib/inbox-context";
+
 export interface TerminalPaneInfo {
   id: string;
   title: string;
@@ -56,6 +59,31 @@ export function TerminalPane() {
   const [notice, setNotice] = useState("");
   const [sendError, setSendError] = useState("");
   const [text, setText] = useState("");
+  const [caretBump, setCaretBump] = useState(0);
+
+  /**
+   * Take an inbox card's context block into the draft.
+   *
+   * Appends — the draft is the human's and is never overwritten — then bumps a
+   * counter so the caret lands after the block once React has committed the new
+   * value, leaving them ready to write their instruction around it.
+   */
+  useEffect(
+    () =>
+      onTerminalContext((block) => {
+        setText((current) => appendContext(current, block));
+        setCaretBump((value) => value + 1);
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (caretBump === 0) return;
+    const input = composerRef.current;
+    if (input === null) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }, [caretBump]);
 
   const sendViewport = useCallback(() => {
     const terminal = terminalRef.current;
@@ -218,7 +246,10 @@ export function TerminalPane() {
 
   /** POST one input to the selected pane. Returns false when it was refused. */
   const post = async (body: Record<string, unknown>): Promise<boolean> => {
-    if (selectedPaneId === null) return false;
+    if (selectedPaneId === null) {
+      setSendError("No pane is selected, so there is nowhere to send this");
+      return false;
+    }
     try {
       const response = await fetch("/api/term/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paneId: selectedPaneId, ...body }) });
       if (response.ok) { setSendError(""); return true; }
@@ -286,10 +317,13 @@ export function TerminalPane() {
     <form onSubmit={submit} className="flex shrink-0 items-center gap-2 border-t border-zinc-800 p-2 sm:p-3">
       <input
         ref={composerRef}
+        name="pane-composer"
         value={text}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onComposerKeyDown}
-        disabled={selectedPaneId === null}
+        // Never disabled: an inbox card can drop a context block here before a
+        // pane has resolved, and a disabled field cannot take focus or a caret,
+        // so the block would land somewhere the human cannot see or edit.
         placeholder={selectedPane === undefined ? "No pane selected" : "Type to this pane…"}
         aria-label="Send to the selected pane"
         className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400 disabled:opacity-50 sm:text-sm"

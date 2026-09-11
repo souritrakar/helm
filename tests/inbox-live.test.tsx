@@ -136,6 +136,60 @@ describe("live inbox shell", () => {
     expect(within(article).getByText(card.detail ?? "")).toBeDefined();
   });
 
+  it("shows a long header whole, never clipped to an unreachable ellipsis", () => {
+    const stream = openStream();
+    const title =
+      'helm inbox v2: (1) an "add to context" icon button on every inbox card; (2) surface firstmate questions as answerable cards; (3) redesign the inbox for strong visual hierarchy.';
+    const card = baseItem({ id: inboxItemId("captain-holds", "helm-inbox-context"), title });
+    act(() => {
+      stream.emit("snapshot.begin", { ids: [card.id] });
+      stream.emit("item.upsert", card);
+      stream.emit("snapshot.end", { count: 1 });
+    });
+
+    const heading = screen.getByRole("heading", { name: title });
+    expect(heading.textContent).toBe(title);
+    // A clipped header is the bug: an ellipsis with no way to reach the rest.
+    expect(heading.className).not.toContain("truncate");
+    expect(heading.className).not.toContain("line-clamp");
+  });
+
+  it("keeps a long body in the DOM behind Show more, so nothing is unreachable", () => {
+    const stream = openStream();
+    const detail = `${"A long task note that wraps. ".repeat(20)}\nlast line`;
+    const card = baseItem({ id: inboxItemId("captain-holds", "long-body"), detail });
+    act(() => {
+      stream.emit("snapshot.begin", { ids: [card.id] });
+      stream.emit("item.upsert", card);
+      stream.emit("snapshot.end", { count: 1 });
+    });
+    const article = screen.getByRole("heading", { name: card.title }).closest("article");
+    if (article === null) throw new Error("missing card");
+
+    // Collapsed is a CSS clamp, not a text cut: the whole body is already here.
+    const body = (): string => article.querySelector("p")?.textContent ?? "";
+    expect(body()).toBe(detail);
+
+    fireEvent.click(within(article).getByRole("button", { name: "Show more" }));
+
+    expect(within(article).getByRole("button", { name: "Show less" })).toBeDefined();
+    expect(body()).toBe(detail);
+  });
+
+  it("offers no Show more when the body already fits", () => {
+    const stream = openStream();
+    const card = baseItem({ id: inboxItemId("captain-holds", "short-body"), detail: "A or B?" });
+    act(() => {
+      stream.emit("snapshot.begin", { ids: [card.id] });
+      stream.emit("item.upsert", card);
+      stream.emit("snapshot.end", { count: 1 });
+    });
+    const article = screen.getByRole("heading", { name: card.title }).closest("article");
+    if (article === null) throw new Error("missing card");
+
+    expect(within(article).queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
   it("drops an open card that a later snapshot omits, and keeps a session-answered card", () => {
     const stream = openStream();
     const open = baseItem();
