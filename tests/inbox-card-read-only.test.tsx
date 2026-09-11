@@ -126,8 +126,12 @@ describe("closed inbox cards", () => {
     showTab("Answered");
     const card = cardFor("UI shell review is complete");
 
-    expect(within(card).queryByRole("button")).toBeNull();
     expect(within(card).queryByRole("button", { name: "Acknowledge" })).toBeNull();
+    // Add-to-terminal is the one control a closed card keeps: it reads the card
+    // into the composer and answers nothing.
+    expect(within(card).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual([
+      'Add "UI shell review is complete" to the terminal composer',
+    ]);
   });
 
   it("offers no freeform field, Send control, or Dismiss on a closed card", () => {

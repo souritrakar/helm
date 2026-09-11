@@ -121,7 +121,7 @@ that adapter's id, so one source cannot reconcile another source's cards away.
 Production registration is `registerProductionAdapters` in
 `src/lib/adapters/index.ts`.
 
-Nine read-only producers ship:
+Ten read-only producers ship:
 
 | Adapter | File | Source |
 | --- | --- | --- |
@@ -132,6 +132,7 @@ Nine read-only producers ship:
 | `steering-backlog` | `adapters/state.ts` | `$FM_HOME/state/<id>.inbox/*.msg` not under `handled/` |
 | `procevent` | `adapters/state.ts` | `$FM_HOME/state/procevent-inbox/*.result` via `fm-procevent.sh classify` |
 | `answers` | `adapters/answers.ts` | `$FM_HOME/state/answers/*.json`, schema-validated read-only answers |
+| `asks` | `adapters/asks.ts` | `$FM_HOME/state/asks/*.json`, questions firstmate is putting TO the captain |
 | `agent-state` | `adapters/herdr-events.ts` | Herdr `pane.agent_status_changed` when status is `blocked` |
 | `output-match` | `adapters/herdr-events.ts` | Configured `HELM_OUTPUT_MATCHES` / `pane.output_matched` |
 
@@ -141,6 +142,41 @@ another source, including the three SPEC §5.4 tiers, is
 
 Adapter text is untrusted input. The UI renders it inert. Exec passes it as
 argv. It is never instruction and never authority.
+
+## Two halves of the same conversation
+
+`answer` and `ask` are inverse primitives, and both exist so a message between
+firstmate and the captain is never buried in the pane it was typed into.
+
+| | `answers` | `asks` |
+| --- | --- | --- |
+| Direction | firstmate answers the captain | firstmate asks the captain |
+| Source | `$FM_HOME/state/answers/*.json` | `$FM_HOME/state/asks/*.json` |
+| Record | `{id, question, answer, ref?, ts}` | `{id, question, context, options?, ref?, ts}` |
+| Card | read-only, attention | answerable, blocking |
+| Answer | none — read and dismiss | `relay` into the firstmate pane |
+
+firstmate owns writing both. helm reads, schema-validates field by field, and
+renders. An `options` entry on an ask is BOTH the button label and the answer
+relayed verbatim, so helm invents no answer vocabulary. `allowFreeform` is
+always true on an ask: a question deserves a nuanced reply even when firstmate
+offered shortcuts.
+
+## Add to terminal
+
+Every card carries one control that answers nothing: it renders the card as a
+labelled context block and appends it to the terminal composer, so the operator
+can write an instruction around it.
+
+- `src/lib/inbox-context.ts` builds the block. Pure, and **one line** — the
+  composer posts to `/api/term/input`, which submits the line with a trailing
+  Enter, so a newline would become a second pane submission. Every field is
+  flattened and control characters are stripped there rather than refused later.
+- `src/components/terminal-composer.ts` carries it across the tree. The card
+  publishes; the shell un-folds the terminal; the composer appends. A block
+  published while the terminal is folded away is queued, because the reveal is
+  what mounts the subscriber.
+- The draft is never overwritten. The block appends and the caret lands after it.
 
 ## D-C answer routing
 

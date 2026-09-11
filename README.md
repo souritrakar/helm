@@ -59,12 +59,16 @@ Converse field sends one single-line message (`herdr pane run`) or one named
 key. Clicking the read-only mirror focuses that field; helm does not take
 control of the pane or start or stop Herdr sessions.
 
-**Inbox.** Nine read-only adapters publish a full open set. The store
+**Inbox.** Ten read-only adapters publish a full open set. The store
 reconciles by id and streams changes over SSE. Open, Answered, and Dismissed
-tabs group cards into Decisions, Approvals, Answers, and Info. Keyed status decisions answer through
+tabs group cards into Decisions, Questions, Approvals, Answers, and Info.
+Questions from firstmate (`$FM_HOME/state/asks/*.json`) are answerable cards:
+their offered options and typed replies relay verbatim to the configured or
+discovered firstmate pane. Keyed status decisions answer through
 `fm-send.sh --resolve-key`. Captain-held, merge, credential, and other
-freeform cards relay to the configured or discovered firstmate pane. A card
-with no reachable relay pane is honestly read-only. Answered and dismissed
+freeform cards also relay; a card with no reachable relay pane is honestly
+read-only. Every card can append its labelled, one-line context to the
+terminal composer without replacing the current draft. Answered and dismissed
 history (including each card's captured body) and the response audit live
 under `HELM_STATE_DIR`, never under `$FM_HOME`. The Fleet panel summarizes
 cached task health and flags work that needs you.

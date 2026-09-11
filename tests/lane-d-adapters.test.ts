@@ -16,6 +16,23 @@ import type { InboxItem } from "@/lib/types";
 /** The firstmate pane discovery would resolve, so relay cards are answerable. */
 const RELAY_PANE = "w1:p1";
 
+/** A real backlog title: a whole task brief, not a phrase. */
+const LONG_TITLE =
+  'helm inbox v2: (1) an "add to context" icon button on every inbox card; (2) surface firstmate questions as answerable cards; (3) redesign the inbox for strong visual hierarchy.';
+
+/** A minimal `fm-fleet-snapshot.v1` payload carrying `records`. */
+function fleetSnapshotJson(records: unknown[]): unknown {
+  return {
+    schema: "fm-fleet-snapshot.v1",
+    generated: "2026-09-07T00:00:00Z",
+    fm_home: "fixture",
+    roots: { fm_root: "/fixture", state: "/fixture/state", data: "/fixture/data", config: "/fixture/config", projects: "/fixture/projects" },
+    backlog: { path: "/fixture/backlog", present: true, records },
+    tasks: [],
+    main_inventory: { valid: true, reason: null, orphan_in_flight: [], unstructured_current_count: 0 },
+  };
+}
+
 let root = "";
 let config: HelmConfig;
 let emitted: InboxItem[][];
@@ -39,11 +56,11 @@ function stateAdapter(id: string) { return createStateAdapters(config, { relayTa
 function herdrAdapter(id: string, deps: StateAdapterDeps = { relayTarget: () => RELAY_PANE }) { return createHerdrAdapters(config, deps).find((adapter) => adapter.id === id)!; }
 
 describe("state record adapters", () => {
-  it("registers all nine production sources exactly once", () => {
+  it("registers all ten production sources exactly once", () => {
     const registry = createAdapterRegistry();
     registerProductionAdapters(registry, config, { relayTarget: () => RELAY_PANE });
     expect(registry.list().map((adapter) => adapter.id)).toEqual([
-      "status-decisions", "captain-holds", "bearings", "captain-notes", "steering-backlog", "procevent", "answers", "agent-state", "output-match",
+      "status-decisions", "captain-holds", "bearings", "captain-notes", "steering-backlog", "procevent", "answers", "asks", "agent-state", "output-match",
     ]);
   });
 
@@ -84,6 +101,45 @@ describe("state record adapters", () => {
       title: "Approve release", detail: "Awaiting captain", respond: { channel: "relay", target: RELAY_PANE },
       options: [{ value: "approve" }, { value: "deny" }], allowFreeform: true,
     }]);
+  });
+
+  it("keeps a long backlog title whole and never lets a placeholder dash become the body", async () => {
+    // firstmate spells "no value" as a literal `-` as often as it writes null,
+    // which is what made a real card render its body as a single dash.
+    const payload = join(root, "snapshot.json");
+    writeFileSync(payload, JSON.stringify(fleetSnapshotJson([{
+      order: 1, state: "queued", raw: `- [ ] helm-inbox-context - ${LONG_TITLE} (since 2026-09-10)`,
+      structured: true, id: "helm-inbox-context", title: LONG_TITLE, repo: "-", kind: null,
+      hold_kind: null, hold_reason: "-", hold_until: null, blocked_by_ids: [],
+      unresolved_blocker_ids: [], current_role: null, captain_actionable: true,
+      deferred_marker: false, pr_url: null,
+    }])));
+    const script = join(config.fmBinDir, "fm-fleet-snapshot.sh");
+    writeFileSync(script, `#!/bin/sh\ncat ${payload}\n`);
+    chmodSync(script, 0o755);
+
+    await start(stateAdapter("captain-holds"));
+    const [card] = emitted.at(-1) ?? [];
+
+    // The header carries the whole brief. Clipping it here would hide the words
+    // that identify the task no matter how the card renders it.
+    expect(card?.title).toBe(LONG_TITLE);
+    expect(card?.detail).toContain("helm-inbox-context");
+    expect(card?.detail).not.toBe("-");
+    expect(card?.repo).toBeUndefined();
+  });
+
+  it("titles a steering instruction with the instruction, not a generic label", async () => {
+    const pending = join(config.fmStateDir, "worker.inbox");
+    mkdirSync(pending, { recursive: true });
+    writeFileSync(join(pending, "001.msg"), "\nSplit the PR if it grows unreviewable.\nThe captain asked for one PR.\n");
+
+    await start(stateAdapter("steering-backlog"));
+
+    expect(emitted.at(-1)?.[0]).toMatchObject({
+      title: "Split the PR if it grows unreviewable.",
+      detail: "\nSplit the PR if it grows unreviewable.\nThe captain asked for one PR.\n",
+    });
   });
 
   it("classifies an unhandled process result but never invokes handled or mutating commands", async () => {

@@ -39,6 +39,12 @@ These are not style preferences. Each one protects something that fails silently
    supersedes the earlier "take the selector from `actions.steer`" note.)
 6. **No Herdr lifecycle control.** helm observes, sends text, and reads. It never starts, stops,
    restarts, or deletes a session, workspace, or pane.
+7. **Never verify relay against a live agent pane.** A relay round-trip types a real line into a
+   real session, so a test answer is indistinguishable from a captain instruction to the agent
+   reading it. Point `HELM_CAPTAIN_PANE` at a disposable or nonexistent pane, or assert on the
+   audited argv in `actions.jsonl` — `herdr pane list` tells you which pane id is firstmate's
+   before you choose one. (Captain instruction, 2026-09-11, after a verification line landed in
+   the live firstmate pane.)
 
 ### The cockpit surface — three traps that fail silently
 
@@ -61,14 +67,27 @@ count is tens rather than thousands, no row span carries a `letter-spacing`, con
 
 ### Shape decisions worth knowing
 
-- **Inbox presentation is `src/lib/inbox-view.ts`** — bucket, tab, display order, and which
-  response control a card renders. It is pure and shared, so the tab counts, the sort, and
-  the card label cannot disagree. Buckets are the three things helm exists to surface
-  (decisions, approvals, answers) plus info.
-- **Answer cards** read `$FM_HOME/state/answers/*.json` (`{id,question,answer,ref?,ts}`);
-  firstmate writes them, helm only renders them read-only. Contract, validation, and the
-  skip-and-report rule live in `src/lib/adapters/answers.ts`; fixtures in
-  `tests/fixtures/answers/`.
+- **Inbox presentation is `src/lib/inbox-view.ts`** — bucket, kind label, tab, urgency band,
+  display order, and which response control a card renders. It is pure and shared, so the tab
+  counts, the sort, the section headers, the card chip, and the context block cannot disagree.
+  Buckets are the four things helm exists to surface (decisions, questions, approvals, answers)
+  plus info. The open tab is banded by urgency (`sectionsForTab`); handled tabs are not, because
+  a "Blocking" header over a closed card claims something untrue.
+- **Ask cards and terminal context** are documented in
+  [`docs/architecture.md`](docs/architecture.md#two-halves-of-the-same-conversation) and
+  [`docs/architecture.md`](docs/architecture.md#add-to-terminal); keep their source contracts,
+  one-line pane constraint, and adapter guidance there rather than copying them here.
+- **A card must never hide what the human needs to act on.** Titles wrap and are never clipped;
+  bodies collapse behind a CSS line clamp with "Show more", so the full text stays in the DOM.
+  Adapters must pass the full title and body through: firstmate spells "no value" as a literal
+  `-` as often as it writes null, so use `present()` in `src/lib/adapters/state.ts` rather than
+  `??`, or the body renders as a bare dash.
+- **Design tokens live in `src/app/globals.css`**, not at call sites: a five-step type scale
+  (`text-meta|ui|body|title|display`, with leading baked into the step), status hues
+  (`urgency-blocking|attention|quiet`, `success`, `info`) that both the inbox and the fleet
+  index into, and `foreground-secondary` for body copy that is content rather than meta.
+  Chrome never wears the filled `default` button variant — the strongest mark on screen belongs
+  to a card's answer, not to a view toggle.
 - **Fleet view** is `src/lib/fleet-view.ts` + `GET /api/fleet`. It reads `PaneDirectory`'s
   CACHED snapshot — `fm-fleet-snapshot.sh` budgets up to 180s, so never run the seam per
   request.

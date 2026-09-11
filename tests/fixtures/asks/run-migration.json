@@ -1,0 +1,8 @@
+{
+  "id": "run-migration",
+  "question": "Run the pending staging migration now, or were you only testing the connection?",
+  "context": "helm-service asked me to verify the staging DB connection. The connection is fine, but staging is 3 migrations behind production and I do not know whether you wanted them applied as part of that check.",
+  "options": ["Run the migrations now", "I was only testing the connection"],
+  "ref": "w1:p5 · firstmate pane",
+  "ts": "2026-09-10T21:04:00Z"
+}

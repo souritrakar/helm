@@ -50,6 +50,33 @@ const APPROVAL_OPTIONS: readonly InboxOption[] = [
   { value: "deny", label: "Deny", hint: "Relay a refusal to firstmate" },
 ];
 
+/**
+ * A field firstmate wrote, or nothing.
+ *
+ * firstmate's record formats spell "no value" as a literal `-` as often as they
+ * leave the field null, so a bare `??` puts a dash on screen where the body
+ * should be and the card reads as empty. Treat both as absent and fall through
+ * to the next-best source.
+ */
+function present(...values: (string | null | undefined)[]): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed !== undefined && trimmed !== "" && trimmed !== "-") return trimmed;
+  }
+  return undefined;
+}
+
+/**
+ * The first meaningful line of a record, for use as a title.
+ *
+ * Returned whole — never cut to a fixed width. A card that clips its own header
+ * hides the one thing the human opened the inbox to read; wrapping is the
+ * renderer's job (`inbox-card.tsx`).
+ */
+function firstLine(text: string): string | undefined {
+  return present(text.split("\n").find((line) => line.trim() !== ""));
+}
+
 function pollingAdapter(id: string, path: string, read: () => Promise<InboxItem[]>): InboxAdapter {
   return {
     id,
@@ -86,8 +113,12 @@ function captainHolds(cfg: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
   return pollingAdapter("captain-holds", cfg.fmStateDir, async () => {
     const snapshot = await fleetSnapshot(cfg);
     return snapshot.backlog.records.filter(isStructuredBacklogRecord).filter((record) => record.captain_actionable).map((record) => {
-      return open("captain-holds", record.id, { kind: "captain-held", urgency: "blocking", taskId: record.id, repo: record.repo ?? undefined,
-        title: record.title ?? `Captain hold: ${record.id}`, detail: record.hold_reason ?? record.raw,
+      // The hold reason when there is one, the raw backlog line otherwise — a
+      // card whose body is a bare "-" tells the human nothing.
+      const detail = present(record.hold_reason, record.raw);
+      return open("captain-holds", record.id, { kind: "captain-held", urgency: "blocking", taskId: record.id, repo: present(record.repo),
+        title: present(record.title, firstLine(record.raw)) ?? `Captain hold: ${record.id}`,
+        detail: detail === record.title ? undefined : detail,
         options: APPROVAL_OPTIONS, allowFreeform: true, respond: relay(deps), evidence: [{ path: snapshot.backlog.path }],
       });
     });
@@ -120,14 +151,19 @@ function captainNotes(cfg: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
   return pollingAdapter("captain-notes", dir, async () => safeFiles(dir, (file) => file.endsWith(".note")).map((file) => {
     const id = basename(file, ".note"); const text = readSafe(file);
     const respond = relay(deps);
-    return open("captain-notes", id, { kind: "note", urgency: "fyi", title: text.trim().split("\n")[0] ?? `Captain note ${id}`, detail: text, options: [], allowFreeform: respond.channel === "relay", respond, evidence: [{ path: file }] });
+    return open("captain-notes", id, { kind: "note", urgency: "fyi", title: firstLine(text) ?? `Captain note ${id}`, detail: text, options: [], allowFreeform: respond.channel === "relay", respond, evidence: [{ path: file }] });
   }));
 }
 
 function steeringBacklog(cfg: HelmConfig): InboxAdapter {
-  return pollingAdapter("steering-backlog", cfg.fmStateDir, async () => safeFilesRecursive(cfg.fmStateDir, (file) => /\/[^/]+\.inbox\/[^/]+\.msg$/.test(file)).map((file) => open("steering-backlog", relative(cfg.fmStateDir, file), {
-    kind: "note", urgency: "fyi", title: "Unacknowledged steering instruction", detail: readSafe(file), options: [], allowFreeform: false, respond: { channel: "none" }, evidence: [{ path: file }],
-  })));
+  return pollingAdapter("steering-backlog", cfg.fmStateDir, async () => safeFilesRecursive(cfg.fmStateDir, (file) => /\/[^/]+\.inbox\/[^/]+\.msg$/.test(file)).map((file) => {
+    const text = readSafe(file);
+    // The instruction itself, not a generic label: ten of these otherwise read
+    // as ten identical cards and the human must open each to tell them apart.
+    return open("steering-backlog", relative(cfg.fmStateDir, file), {
+      kind: "note", urgency: "fyi", title: firstLine(text) ?? "Unacknowledged steering instruction", detail: text, options: [], allowFreeform: false, respond: { channel: "none" }, evidence: [{ path: file }],
+    });
+  }));
 }
 
 function procevent(cfg: HelmConfig): InboxAdapter {

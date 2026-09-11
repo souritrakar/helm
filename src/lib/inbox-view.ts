@@ -11,11 +11,11 @@ import type { InboxItem, InboxItemKind, InboxItemState, InboxUrgency } from "./t
 /**
  * The groups the human scans by.
  *
- * These are the three things helm exists to surface — what is pending, what
- * needs approval, and answers to questions the human asked — plus everything
- * else, which is context rather than a call to act.
+ * These are the four things helm exists to surface — what is pending, what
+ * firstmate is asking, what needs approval, and answers to questions the human
+ * asked — plus everything else, which is context rather than a call to act.
  */
-export type InboxBucket = "decisions" | "approvals" | "answers" | "info";
+export type InboxBucket = "decisions" | "questions" | "approvals" | "answers" | "info";
 
 /** State tabs. One per {@link InboxItemState}. */
 export type InboxTab = InboxItemState;
@@ -23,6 +23,7 @@ export type InboxTab = InboxItemState;
 const BUCKET_BY_KIND: Record<InboxItemKind, InboxBucket> = {
   "status-decision": "decisions",
   decision: "decisions",
+  ask: "questions",
   merge: "approvals",
   credential: "approvals",
   "captain-held": "approvals",
@@ -39,9 +40,36 @@ const BUCKET_BY_KIND: Record<InboxItemKind, InboxBucket> = {
 
 export const BUCKET_LABELS: Record<InboxBucket, string> = {
   decisions: "Decision",
+  questions: "Question",
   approvals: "Approval",
   answers: "Answer",
   info: "Info",
+};
+
+/**
+ * What the card IS, in the human's words.
+ *
+ * Finer than {@link BUCKET_LABELS}: the bucket groups for sorting, this names
+ * the one card so "Merge approval" and "Credential" do not both read
+ * "Approval". Shared with the context block so the chip on screen and the label
+ * pasted into the composer can never disagree.
+ */
+export const KIND_LABELS: Record<InboxItemKind, string> = {
+  "status-decision": "Decision needed",
+  decision: "Decision",
+  ask: "Question from firstmate",
+  merge: "Merge approval",
+  credential: "Credential",
+  "captain-held": "Captain hold",
+  destructive: "Destructive action",
+  irreversible: "Irreversible action",
+  "security-sensitive": "Security-sensitive",
+  answer: "Answer",
+  blocker: "Blocker",
+  escalation: "Escalation",
+  review: "Review",
+  note: "Note",
+  custom: "Item",
 };
 
 /** Which of the three buckets this card belongs to. */
@@ -53,7 +81,13 @@ export function bucketOf(item: InboxItem): InboxBucket {
 const URGENCY_RANK: Record<InboxUrgency, number> = { blocking: 0, attention: 1, fyi: 2 };
 
 /** Secondary sort: what the human must DO comes before what they can read. */
-const BUCKET_RANK: Record<InboxBucket, number> = { decisions: 0, approvals: 1, answers: 2, info: 3 };
+const BUCKET_RANK: Record<InboxBucket, number> = {
+  decisions: 0,
+  questions: 1,
+  approvals: 2,
+  answers: 3,
+  info: 4,
+};
 
 /**
  * Order for display: urgency, then bucket, then age.
@@ -80,6 +114,48 @@ export function sortForDisplay(items: readonly InboxItem[], tab: InboxTab): Inbo
 /** The cards belonging on `tab`, already ordered for display. */
 export function itemsForTab(items: readonly InboxItem[], tab: InboxTab): InboxItem[] {
   return sortForDisplay(items.filter((item) => item.state === tab), tab);
+}
+
+/**
+ * The band header the human reads above a run of cards.
+ *
+ * Urgency is the primary sort, so a band is already a contiguous run — naming
+ * it costs one line and turns an undifferentiated scroll into "three things are
+ * blocking, the rest can wait".
+ */
+export const URGENCY_SECTION_LABELS: Record<InboxUrgency, string> = {
+  blocking: "Blocking",
+  attention: "Needs you",
+  fyi: "For information",
+};
+
+/** A run of cards under one header. `label` is null when the tab needs none. */
+export interface InboxSection {
+  readonly key: string;
+  readonly label: string | null;
+  readonly items: readonly InboxItem[];
+}
+
+/**
+ * The cards on `tab`, ordered for display and banded by urgency.
+ *
+ * Only the open tab bands: on Answered and Dismissed the question is "what did
+ * I just do", which the newest-first order already answers, and a "Blocking"
+ * header over a closed card would claim something untrue.
+ */
+export function sectionsForTab(items: readonly InboxItem[], tab: InboxTab): InboxSection[] {
+  const ordered = itemsForTab(items, tab);
+  if (tab !== "open") {
+    return ordered.length === 0 ? [] : [{ key: tab, label: null, items: ordered }];
+  }
+  const sections: InboxSection[] = [];
+  for (const urgency of ["blocking", "attention", "fyi"] as const) {
+    const band = ordered.filter((item) => item.urgency === urgency);
+    if (band.length > 0) {
+      sections.push({ key: urgency, label: URGENCY_SECTION_LABELS[urgency], items: band });
+    }
+  }
+  return sections;
 }
 
 /** Whether the operator can still act on this card. */

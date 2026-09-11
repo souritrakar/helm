@@ -13,6 +13,8 @@ import {
   controlFor,
   isActionable,
   itemsForTab,
+  KIND_LABELS,
+  sectionsForTab,
   sortForDisplay,
 } from "@/lib/inbox-view";
 import { inboxItemId, type InboxItem, type InboxItemKind } from "@/lib/types";
@@ -145,5 +147,66 @@ describe("response control", () => {
 
   it("is read-only when the card declares neither options nor freeform", () => {
     expect(controlFor(item({ kind: "blocker" }))).toBe("none");
+  });
+});
+
+describe("naming what a card is", () => {
+  it("gives every kind a label, so a new kind cannot render blank", () => {
+    const kinds: InboxItemKind[] = [
+      "status-decision", "decision", "ask", "merge", "credential", "captain-held",
+      "destructive", "irreversible", "security-sensitive", "answer", "blocker",
+      "escalation", "review", "note", "custom",
+    ];
+
+    for (const kind of kinds) expect(KIND_LABELS[kind]).toBeTruthy();
+  });
+
+  it("files a firstmate question under its own bucket, not under decisions", () => {
+    expect(bucketOf(item({ kind: "ask" }))).toBe("questions");
+    expect(BUCKET_LABELS.questions).toBe("Question");
+  });
+
+  it("names a question more precisely than its bucket does", () => {
+    expect(KIND_LABELS.ask).toBe("Question from firstmate");
+    expect(KIND_LABELS.merge).toBe("Merge approval");
+    expect(KIND_LABELS.credential).toBe("Credential");
+  });
+});
+
+describe("banding the open tab", () => {
+  const blocking = item({ kind: "ask", urgency: "blocking", openedAt: "2026-09-06T00:00:00.000Z" });
+  const attention = item({ kind: "answer", urgency: "attention", openedAt: "2026-09-06T01:00:00.000Z" });
+  const fyi = item({ kind: "note", urgency: "fyi", openedAt: "2026-09-06T02:00:00.000Z" });
+
+  it("names each urgency band and keeps them in that order", () => {
+    const sections = sectionsForTab([fyi, attention, blocking], "open");
+
+    expect(sections.map((section) => section.label)).toEqual(["Blocking", "Needs you", "For information"]);
+    expect(sections.map((section) => section.items.length)).toEqual([1, 1, 1]);
+  });
+
+  it("omits a band with no cards rather than showing an empty header", () => {
+    expect(sectionsForTab([fyi], "open").map((section) => section.label)).toEqual(["For information"]);
+  });
+
+  it("holds exactly the cards itemsForTab would show, in the same order", () => {
+    const items = [fyi, attention, blocking];
+
+    expect(sectionsForTab(items, "open").flatMap((section) => section.items)).toEqual(
+      itemsForTab(items, "open"),
+    );
+  });
+
+  it("leaves handled tabs unbanded: a closed card is not still blocking", () => {
+    const answered = item({ kind: "ask", state: "answered", answeredAt: "2026-09-06T03:00:00.000Z" });
+    const sections = sectionsForTab([answered], "answered");
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]?.label).toBeNull();
+  });
+
+  it("yields nothing at all for an empty tab, so the shell shows its empty state", () => {
+    expect(sectionsForTab([], "open")).toEqual([]);
+    expect(sectionsForTab([], "dismissed")).toEqual([]);
   });
 });

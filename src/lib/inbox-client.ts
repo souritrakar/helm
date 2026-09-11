@@ -43,6 +43,7 @@ const inboxItemSchema = z.object({
     "review",
     "note",
     "answer",
+    "ask",
     "custom",
   ]),
   urgency: z.enum(["blocking", "attention", "fyi"]),
