@@ -16,7 +16,7 @@
  * Pure and framework-free, so the format is unit-testable without a DOM.
  */
 import { KIND_LABELS } from "./inbox-view";
-import type { InboxItem, InboxOption } from "./types";
+import type { InboxEvidence, InboxItem, InboxOption } from "./types";
 
 /** Separates the labelled segments. Distinct enough to survive a wrapped line. */
 const SEPARATOR = " · ";
@@ -42,14 +42,18 @@ function segment(label: string, value: string | undefined): string | null {
 function optionContext(option: InboxOption): string {
   const label = flattenField(option.label);
   const value = flattenField(option.value);
-  const fields = [`label: ${label}`];
+  const fields: string[] = [];
 
   if (value !== label) fields.push(`value: ${value}`);
 
   const hint = option.hint === undefined ? "" : flattenField(option.hint);
   if (hint !== "") fields.push(`hint: ${hint}`);
 
-  return `{${fields.join("; ")}}`;
+  return fields.length === 0 ? label : `${label} (${fields.join("; ")})`;
+}
+
+function evidenceContext(entry: InboxEvidence): string {
+  return flattenField(entry.line === undefined ? entry.path : `${entry.path}:${entry.line}`);
 }
 
 /**
@@ -71,13 +75,13 @@ export function inboxItemContext(item: InboxItem): string {
     segment("Task", item.taskId),
     segment("Repo", item.repo),
     item.options.length > 0
-      ? `Options: ${item.options.map(optionContext).join(" || ")}`
+      ? `Options: ${item.options.map(optionContext).join(" | ")}`
       : null,
     item.allowFreeform && item.options.length > 0 ? "Also accepts a typed reply" : null,
     segment("Recommended", item.recommendValue),
     segment("Ref", item.ref),
     item.evidence.length > 0
-      ? `Evidence: ${item.evidence.map((entry) => flattenField(entry.path)).join(", ")}`
+      ? `Evidence: ${item.evidence.map(evidenceContext).join(", ")}`
       : null,
     segment("Answer routes", describeChannel(item)),
     segment("Source", item.source),

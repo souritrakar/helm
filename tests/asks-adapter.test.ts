@@ -155,6 +155,18 @@ describe("reading the asks directory", () => {
     expect(skipped).toEqual(["bad.json"]);
   });
 
+  it("skips pane-unsafe ids and options while accepting a multi-line context", () => {
+    write("unsafe-id.json", { ...RECORD, id: "run\nmigration" });
+    write("unsafe-option.json", { ...RECORD, options: ["Run\nit now"] });
+    write("multiline-context.json", { ...RECORD, id: "multiline", context: "line one\nline two" });
+    const skipped: string[] = [];
+
+    const cards = readAskRecords(asksDir, RELAY, (file) => skipped.push(file));
+
+    expect(cards).toMatchObject([{ id: "asks:multiline", detail: "line one\nline two" }]);
+    expect(skipped).toEqual(["unsafe-id.json", "unsafe-option.json"]);
+  });
+
   it("skips a file that is not JSON at all rather than throwing", () => {
     write("broken.json", "{ this is not json");
     const skipped: string[] = [];

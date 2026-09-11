@@ -36,10 +36,14 @@ const POLL_MS = 5_000;
  * forever (captain decision `answered-history-unbounded-and-permanent`).
  */
 export const askRecordSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).refine((value) => !/[\u0000-\u001f\u007f]/.test(value), {
+    message: "id must not contain tab, newline, or control characters",
+  }),
   question: z.string().min(1),
   context: z.string().min(1),
-  options: z.array(z.string().min(1)).optional(),
+  options: z.array(z.string().min(1).refine((value) => !/[\u0000-\u001f\u007f]/.test(value), {
+    message: "option must not contain tab, newline, or control characters",
+  })).optional(),
   ref: z.string().min(1).optional(),
   ts: z.string().min(1),
 });

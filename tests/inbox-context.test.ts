@@ -53,7 +53,7 @@ describe("the context block", () => {
 
     expect(block).toContain("Title: Run the migration now, or were you testing?");
     expect(block).toContain("Detail: Staging is three migrations behind production.");
-    expect(block).toContain("Options: {label: Run it now} || {label: I was testing}");
+    expect(block).toContain("Options: Run it now | I was testing");
     expect(block).toContain("Also accepts a typed reply");
     expect(block).toContain("Answer routes: relay into pane w1:p5");
     expect(block).toContain("Evidence: /home/s7kar/firstmate/state/asks/run-migration.json");
@@ -94,14 +94,14 @@ describe("the context block", () => {
     };
 
     expect(inboxItemContext(decision)).toContain(
-      "Options: {label: Restart now; value: restart-now; hint: Drains workers first} || {label: Defer; value: defer}",
+      "Options: Restart now (value: restart-now; hint: Drains workers first) | Defer (value: defer)",
     );
   });
 
   it("omits an option value when it is identical to its label", () => {
     const block = inboxItemContext(BASE);
 
-    expect(block).toContain("{label: Run it now}");
+    expect(block).toContain("Options: Run it now | I was testing");
     expect(block).not.toContain("value: Run it now");
   });
 
@@ -124,6 +124,16 @@ describe("the context block", () => {
     expect(block).not.toContain("Detail:");
     expect(block).not.toContain("Ref:");
     expect(block).not.toContain("Evidence:");
+  });
+
+  it("keeps evidence locations when available without adding a separator when absent", () => {
+    const block = inboxItemContext({
+      ...BASE,
+      evidence: [{ path: "docs/runbook.md", line: 42 }, { path: "docs/notes.md" }],
+    });
+
+    expect(block).toContain("Evidence: docs/runbook.md:42, docs/notes.md");
+    expect(block).not.toContain("docs/notes.md:");
   });
 
   it("stays one line even when every field is multi-line", () => {
