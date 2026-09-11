@@ -5,7 +5,8 @@ import { ThemeProvider as NextThemesProvider } from "next-themes";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   return (
-    <NextThemesProvider attribute="class" defaultTheme="system" enableSystem>
+    // Light is the product default; keep system resolution off so dark requires an explicit class.
+    <NextThemesProvider attribute="class" defaultTheme="light" enableSystem={false}>
       {children}
     </NextThemesProvider>
   );

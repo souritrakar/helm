@@ -273,7 +273,7 @@ describe("TerminalPane dropdown", () => {
     socket.send.mockClear();
     fireEvent.change(screen.getByRole("combobox", { name: "Pane" }), { target: { value: "w1:p2" } });
     expect(socket.send).not.toHaveBeenCalled();
-    expect(screen.getByText("Terminal connection is not ready")).toBeTruthy();
+    expect(screen.getByText("The terminal is not connected. Press Reconnect.")).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Pane" })).toHaveProperty("value", "w1:p1");
   });
 });

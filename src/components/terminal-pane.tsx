@@ -7,6 +7,8 @@ import { ChevronDown, CornerDownLeft, Send, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { onTerminalContext, type TerminalContext } from "@/components/terminal-composer";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { composePaneLine } from "@/lib/inbox-context";
 
 export interface TerminalPaneInfo {
@@ -122,6 +124,8 @@ export function TerminalPane() {
       // The pane owns scrollback; a second buffer here would only diverge from
       // it and stretch the surface the fit addon measures.
       scrollback: 1000,
+      // These two literals are mirrored by `--color-terminal-screen` and
+      // `--color-terminal-ink`; xterm cannot take a CSS `var()` here.
       theme: { background: "#09090b", foreground: "#fafafa" },
     });
     const fit = new FitAddon();
@@ -239,13 +243,13 @@ export function TerminalPane() {
   const selectPane = (paneId: string): void => {
     const socket = socketRef.current;
     if (socket?.readyState !== WebSocket.OPEN) {
-      setNotice("Terminal connection is not ready");
+      setNotice("The terminal is not connected. Press Reconnect.");
       return;
     }
     try {
       socket.send(JSON.stringify({ type: "terminal.select", paneId }));
     } catch {
-      setNotice("Terminal connection is not ready");
+      setNotice("The terminal is not connected. Press Reconnect.");
       return;
     }
     terminalRef.current?.reset();
@@ -312,58 +316,91 @@ export function TerminalPane() {
   const selectedPane = panes.find((pane) => pane.id === selectedPaneId);
   const live = status === "connected";
 
-  return <section className="flex h-full min-h-0 min-w-0 flex-col bg-zinc-950 text-zinc-100">
-    <header className="flex shrink-0 items-center gap-2 border-b border-zinc-800 px-2 py-2 sm:px-3">
-      <label className="relative min-w-0 flex-1"><span className="sr-only">Pane</span><select value={selectedPaneId ?? ""} onChange={(event) => selectPane(event.target.value)} className="w-full appearance-none truncate rounded-md border border-zinc-700 bg-zinc-900 py-1.5 pl-2.5 pr-8 text-sm text-zinc-100">
-        {panes.length === 0 && <option value="">No panes available</option>}
+  /*
+   * A dark screen in a light bezel.
+   *
+   * Only the mirror itself is dark, because a terminal IS dark — the pane
+   * picker, the banners and the composer are helm's own controls and belong to
+   * the light cockpit around them. Inverting the whole panel instead made half
+   * the product look like a different application.
+   */
+  return <section className="flex h-full min-h-0 min-w-0 flex-col bg-card">
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 sm:px-4">
+      <label className="relative min-w-0 flex-1">
+        <span className="sr-only">Pane</span>
         {/*
-          The task id stays here, unlike on an inbox card: this is an operator
-          control for picking one pane out of several, and two crew panes can
-          carry the same human title.
+          A native select, deliberately: on a phone it opens the system picker,
+          which beats any custom listbox for one-handed use.
         */}
-        {panes.map((pane) => <option key={pane.id} value={pane.id}>{pane.isFirstmate ? "Firstmate — " : ""}{pane.taskTitle ?? pane.title}{pane.taskId === null ? "" : ` (${pane.taskId})`}</option>)}
-      </select><ChevronDown className="pointer-events-none absolute right-2 top-2 size-4 text-zinc-400" /></label>
-      <span className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-400">
-        <span aria-hidden="true" className={`size-1.5 rounded-full ${live ? "bg-emerald-400" : status === "closed" ? "bg-red-400" : "bg-amber-400"}`} />
-        <span className="hidden sm:inline">{live ? "Live" : status === "resyncing" ? "Resyncing" : status === "closed" ? "Offline" : "Connecting"}</span>
+        <select
+          value={selectedPaneId ?? ""}
+          onChange={(event) => selectPane(event.target.value)}
+          className="h-9 w-full min-w-0 appearance-none truncate rounded-lg border border-input bg-card pl-2.5 pr-8 text-ui font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {panes.length === 0 && <option value="">No panes available</option>}
+          {/*
+            The task id stays here, unlike on an inbox card: this is an operator
+            control for picking one pane out of several, and two crew panes can
+            carry the same human title.
+          */}
+          {panes.map((pane) => <option key={pane.id} value={pane.id}>{pane.isFirstmate ? "Firstmate — " : ""}{pane.taskTitle ?? pane.title}{pane.taskId === null ? "" : ` (${pane.taskId})`}</option>)}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+      </label>
+      <span className="flex shrink-0 items-center gap-1.5 text-meta font-medium text-muted-foreground">
+        <span
+          aria-hidden="true"
+          className={`size-1.5 shrink-0 rounded-full ${
+            live ? "bg-success" : status === "closed" ? "bg-urgency-blocking" : "animate-pulse bg-urgency-attention motion-reduce:animate-none"
+          }`}
+        />
+        <span className="sr-only sm:not-sr-only">{live ? "Live" : status === "resyncing" ? "Resyncing" : status === "closed" ? "Offline" : "Connecting"}</span>
       </span>
-      {status === "closed" && <button type="button" onClick={reconnect} className="shrink-0 rounded border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800">Reconnect</button>}
+      {status === "closed" && <Button type="button" variant="outline" size="touch" onClick={reconnect} className="shrink-0">Reconnect</Button>}
     </header>
-    {banners.map((banner) => <div key={banner} className="flex shrink-0 items-start gap-2 border-b border-amber-900/60 bg-amber-950/40 px-3 py-1.5 text-xs text-amber-200"><WifiOff className="mt-0.5 size-3.5 shrink-0" /><span className="min-w-0 break-words">{banner}</span></div>)}
+    {banners.map((banner) => <div key={banner} className="flex shrink-0 items-start gap-2 border-b border-urgency-attention/30 bg-urgency-attention-tint px-3 py-2 text-ui font-medium text-urgency-attention sm:px-4"><WifiOff className="mt-px size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 break-words">{banner}</span></div>)}
     {/*
       Clicking the mirror focuses the composer: the surface is read-only, so a
       keystroke aimed at it would otherwise land nowhere and read as dead input.
+
+      `flex-1 min-h-0` keeps the box BOUNDED. The fit addon measures this element
+      to choose a row count, so a content-driven height is a feedback loop — it
+      once reached 34000px and 2380 rows, which is what garbled the mirror.
     */}
-    <div
-      ref={hostRef}
-      onMouseUp={() => { if ((window.getSelection()?.toString() ?? "") === "") composerRef.current?.focus(); }}
-      className="min-h-0 min-w-0 flex-1 overflow-hidden p-1.5 sm:p-2"
-      aria-label="Live terminal mirror"
-    />
-    <form onSubmit={submit} className="flex shrink-0 flex-col gap-2 border-t border-zinc-800 p-2 sm:p-3">
+    <div className="min-h-0 min-w-0 flex-1 p-3 pt-0 sm:p-4 sm:pt-0">
+      <div
+        ref={hostRef}
+        onMouseUp={() => { if ((window.getSelection()?.toString() ?? "") === "") composerRef.current?.focus(); }}
+        className="h-full min-h-0 w-full min-w-0 overflow-hidden rounded-xl bg-terminal-screen p-2.5 shadow-inset-highlight ring-1 ring-terminal-bezel"
+        aria-label="Live terminal mirror"
+      />
+    </div>
+    <form onSubmit={submit} className="flex shrink-0 flex-col gap-2 border-t bg-card p-3 sm:p-4">
       {contexts.length > 0 && (
         // Above the input, not inside it: the chips say WHICH cards are
         // attached, and the row below stays the human's own sentence.
         <ul role="list" aria-label="Cards attached to this message" className="flex min-w-0 flex-wrap gap-1.5">
           {contexts.map((context) => (
-            <li key={context.text} className="flex min-w-0 max-w-full items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 py-0.5 pl-2 pr-0.5 text-xs text-zinc-300">
+            <li key={context.text} className="flex min-w-0 max-w-full animate-card-in items-center gap-1 rounded-full border border-primary/30 bg-primary-tint py-0.5 pl-2.5 pr-0.5 text-meta font-medium text-primary motion-reduce:animate-none">
               <span className="min-w-0 truncate" title={context.label}>{context.label}</span>
               <button
                 type="button"
                 onClick={() => removeContext(context)}
                 aria-label={`Remove "${context.label}" from this message`}
-                className="relative shrink-0 rounded p-1 text-zinc-400 hover:text-zinc-100"
+                // A 12px glyph is not a tap target, so the BOX grows on a
+                // coarse pointer. An overlaid halo cannot do it: with
+                // `pointer-events-none` the overhang passes taps through, and
+                // without it the halo swallows taps meant for the chip's label.
+                className="flex shrink-0 items-center justify-center rounded-full p-1 text-primary/70 transition-colors hover:text-primary pointer-coarse:size-11"
               >
                 <X className="size-3 shrink-0" aria-hidden="true" />
-                {/* A 12px glyph is not a tap target; the halo makes it 44px. */}
-                <span className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,2.75rem)] -translate-x-1/2 -translate-y-1/2 pointer-fine:hidden" aria-hidden="true" />
               </button>
             </li>
           ))}
         </ul>
       )}
       <div className="flex min-w-0 items-center gap-2">
-        <input
+        <Input
           ref={composerRef}
           name="pane-composer"
           value={text}
@@ -374,15 +411,25 @@ export function TerminalPane() {
           // the human would be left unable to write the instruction around it.
           placeholder={selectedPane === undefined ? "No pane selected" : contexts.length > 0 ? "Write your message…" : "Type to this pane…"}
           aria-label="Send to the selected pane"
-          className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400 disabled:opacity-50 sm:text-sm"
+          className="h-11 min-w-0 flex-1 sm:h-9 sm:text-ui"
         />
-        <button type="button" onClick={() => void post({ key: "c-c" })} disabled={selectedPaneId === null} className="shrink-0 rounded-md border border-zinc-700 px-2 py-2 font-mono text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" title="Interrupt the pane (Ctrl-C)">^C</button>
-        <button type="button" onClick={() => void post({ key: "escape" })} disabled={selectedPaneId === null} className="hidden shrink-0 rounded-md border border-zinc-700 px-2 py-2 font-mono text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40 sm:block" title="Send Escape">esc</button>
-        <button type="submit" disabled={selectedPaneId === null || line === ""} className="inline-flex shrink-0 items-center gap-1 rounded-md bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40">
+        <Button type="button" variant="outline" size="icon-touch" onClick={() => void post({ key: "c-c" })} disabled={selectedPaneId === null} className="shrink-0 font-mono text-meta" title="Interrupt the pane (Ctrl-C)">^C</Button>
+        <Button type="button" variant="outline" size="icon-touch" onClick={() => void post({ key: "escape" })} disabled={selectedPaneId === null} className="hidden shrink-0 font-mono text-meta sm:inline-flex" title="Send Escape">esc</Button>
+        <Button
+          type="submit"
+          size="touch"
+          // Promoted only once there is something to send. An empty composer is
+          // the resting state, so a permanently filled-and-disabled Send would
+          // be the loudest mark in the cockpit while being the one control that
+          // cannot fire — and it would outrank every card answer beside it.
+          variant={line === "" ? "outline" : "default"}
+          disabled={selectedPaneId === null || line === ""}
+          className="shrink-0 font-semibold transition-transform active:scale-[0.98]"
+        >
           <Send className="size-4 shrink-0" aria-hidden="true" />
           <span className="hidden sm:inline">Send</span>
-          <CornerDownLeft className="size-3.5 shrink-0 opacity-60 sm:hidden" aria-hidden="true" />
-        </button>
+          <CornerDownLeft className="size-3.5 shrink-0 opacity-70 sm:hidden" aria-hidden="true" />
+        </Button>
       </div>
     </form>
   </section>;
