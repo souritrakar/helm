@@ -129,10 +129,11 @@ function FleetRow({ member }: { member: FleetMember }) {
       <span className="sr-only">{HEALTH_LABEL[member.health]}. </span>
       <div className="flex min-w-0 items-start gap-2">
         {/*
-          Wraps to two lines rather than clipping. A task title is often a whole
-          brief, and a single-line ellipsis hides the words that identify it.
+          Row identity stays fully readable here; secondary detail lives in the
+          inbox. A task title is often a whole brief, so clipping it hides the
+          words that identify the row.
         */}
-        <h3 className="min-w-0 flex-1 text-pretty break-words text-ui font-semibold [-webkit-box-orient:vertical] [display:-webkit-box] [-webkit-line-clamp:2] overflow-hidden">
+        <h3 className="min-w-0 flex-1 text-pretty break-words text-ui font-semibold">
           {member.title}
         </h3>
         {member.needsYou && (

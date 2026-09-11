@@ -16,7 +16,7 @@
  * Pure and framework-free, so the format is unit-testable without a DOM.
  */
 import { KIND_LABELS } from "./inbox-view";
-import type { InboxItem } from "./types";
+import type { InboxItem, InboxOption } from "./types";
 
 /** Separates the labelled segments. Distinct enough to survive a wrapped line. */
 const SEPARATOR = " · ";
@@ -39,6 +39,19 @@ function segment(label: string, value: string | undefined): string | null {
   return flat === "" ? null : `${label}: ${flat}`;
 }
 
+function optionContext(option: InboxOption): string {
+  const label = flattenField(option.label);
+  const value = flattenField(option.value);
+  const fields = [`label: ${label}`];
+
+  if (value !== label) fields.push(`value: ${value}`);
+
+  const hint = option.hint === undefined ? "" : flattenField(option.hint);
+  if (hint !== "") fields.push(`hint: ${hint}`);
+
+  return `{${fields.join("; ")}}`;
+}
+
 /**
  * The full context of one card, as one line.
  *
@@ -58,7 +71,7 @@ export function inboxItemContext(item: InboxItem): string {
     segment("Task", item.taskId),
     segment("Repo", item.repo),
     item.options.length > 0
-      ? `Options: ${item.options.map((option) => flattenField(option.label)).join(" | ")}`
+      ? `Options: ${item.options.map(optionContext).join(" || ")}`
       : null,
     item.allowFreeform && item.options.length > 0 ? "Also accepts a typed reply" : null,
     segment("Recommended", item.recommendValue),

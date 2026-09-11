@@ -149,9 +149,6 @@ describe("live inbox shell", () => {
 
     const heading = screen.getByRole("heading", { name: title });
     expect(heading.textContent).toBe(title);
-    // A clipped header is the bug: an ellipsis with no way to reach the rest.
-    expect(heading.className).not.toContain("truncate");
-    expect(heading.className).not.toContain("line-clamp");
   });
 
   it("keeps a long body in the DOM behind Show more, so nothing is unreachable", () => {

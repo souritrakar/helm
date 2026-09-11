@@ -53,7 +53,7 @@ describe("the context block", () => {
 
     expect(block).toContain("Title: Run the migration now, or were you testing?");
     expect(block).toContain("Detail: Staging is three migrations behind production.");
-    expect(block).toContain("Options: Run it now | I was testing");
+    expect(block).toContain("Options: {label: Run it now} || {label: I was testing}");
     expect(block).toContain("Also accepts a typed reply");
     expect(block).toContain("Answer routes: relay into pane w1:p5");
     expect(block).toContain("Evidence: /home/s7kar/firstmate/state/asks/run-migration.json");
@@ -84,6 +84,27 @@ describe("the context block", () => {
     expect(block).not.toContain("Options:");
   });
 
+  it("carries distinct option values and operational hints", () => {
+    const decision: InboxItem = {
+      ...BASE,
+      options: [
+        { value: "restart-now", label: "Restart now", hint: "Drains workers first" },
+        { value: "defer", label: "Defer" },
+      ],
+    };
+
+    expect(inboxItemContext(decision)).toContain(
+      "Options: {label: Restart now; value: restart-now; hint: Drains workers first} || {label: Defer; value: defer}",
+    );
+  });
+
+  it("omits an option value when it is identical to its label", () => {
+    const block = inboxItemContext(BASE);
+
+    expect(block).toContain("{label: Run it now}");
+    expect(block).not.toContain("value: Run it now");
+  });
+
   it("says so when a card cannot be answered, rather than staying silent", () => {
     const readOnly: InboxItem = { ...BASE, kind: "answer", options: [], respond: { channel: "none" } };
 
@@ -110,7 +131,7 @@ describe("the context block", () => {
       ...BASE,
       title: "helm inbox v2:\n(1) add to context\n(2) ask cards",
       detail: "A task note\nthat spans\nmany lines.\t\tIndented too.",
-      options: [{ value: "yes", label: "yes\nplease" }],
+      options: [{ value: "yes\tvalue", label: "yes\nplease", hint: "choose\r\nthis" }],
       evidence: [{ path: "/tmp/a\nb" }],
     };
 
@@ -121,7 +142,11 @@ describe("the context block", () => {
   });
 
   it("is accepted by the pane input schema, which is what it exists to survive", () => {
-    const messy: InboxItem = { ...BASE, detail: "line one\nline two\ttabbed" };
+    const messy: InboxItem = {
+      ...BASE,
+      detail: "line one\nline two\ttabbed",
+      options: [{ value: "yes\tvalue", label: "yes\nplease", hint: "choose\r\nthis" }],
+    };
 
     expect(() =>
       parseTerminalInput({ paneId: "w1:p5", text: inboxItemContext(messy) }),
