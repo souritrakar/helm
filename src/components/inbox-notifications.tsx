@@ -12,6 +12,8 @@ import {
 } from "react";
 import { toast } from "sonner";
 
+import { notificationTitle } from "@/lib/inbox-view";
+
 type NotificationPermissionState = NotificationPermission | "unsupported";
 type BlockingNotificationState = { readonly announced: boolean; readonly suppressed: boolean; readonly generation: number };
 
@@ -23,6 +25,8 @@ interface NotificationContextValue {
 
 interface InboxEventItem {
   readonly id: string;
+  /** The primitive type, so an announcement can lead with what the card IS. */
+  readonly kind: string;
   readonly urgency: "blocking" | "attention" | "fyi";
   readonly title: string;
   readonly detail?: string;
@@ -105,6 +109,7 @@ function parseInboxEventItem(raw: string): InboxEventItem | null {
     const item = value as Record<string, unknown>;
     if (
       typeof item.id !== "string" ||
+      typeof item.kind !== "string" ||
       typeof item.title !== "string" ||
       (item.urgency !== "blocking" && item.urgency !== "attention" && item.urgency !== "fyi") ||
       (item.state !== "open" && item.state !== "answered" && item.state !== "dismissed") ||
@@ -112,6 +117,7 @@ function parseInboxEventItem(raw: string): InboxEventItem | null {
     ) return null;
     return {
       id: item.id as string,
+      kind: item.kind as string,
       urgency: item.urgency as InboxEventItem["urgency"],
       title: item.title as string,
       detail: item.detail as string | undefined,
@@ -309,7 +315,10 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
       const generation = ++notificationGeneration.current;
       blockingStates.current.set(item.id, { announced: true, suppressed: false, generation });
       setUnreadBlocking((count) => count + 1);
-      toast.warning(item.title, { description: item.detail, id: `inbox:${item.id}` });
+      // An announcement arrives with no chip and no card around it, so it leads
+      // with what the card IS and keeps the summary as the supporting line.
+      const announcement = notificationTitle(item.kind, item.title);
+      toast.warning(announcement, { description: item.detail, id: `inbox:${item.id}` });
 
       if (
         document.visibilityState !== "visible" &&
@@ -320,7 +329,7 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
             document.visibilityState !== "visible" &&
             blockingStates.current.get(item.id)?.generation === generation
           ) {
-            return registration?.showNotification(item.title, {
+            return registration?.showNotification(announcement, {
               body: item.detail,
               tag: item.id,
               data: { inboxItemId: item.id },

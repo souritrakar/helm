@@ -63,6 +63,16 @@ const HISTORY_TABS: readonly TabSpec[] = [
 ];
 const TABS: readonly TabSpec[] = [OPEN_TAB, ...HISTORY_TABS];
 
+/**
+ * The tabs are a real tablist, so the ids that wire tab to panel live here.
+ *
+ * One panel element carries all three tabs: only the selected tab's content is
+ * ever mounted, so a per-tab panel id would dangle on the two tabs whose panel
+ * does not exist.
+ */
+const INBOX_PANEL_ID = "helm-inbox-panel";
+const tabId = (tab: InboxTab): string => `helm-inbox-tab-${tab}`;
+
 /** The left panel shows one of these at a time, so a phone keeps one column. */
 type LeftView = "inbox" | "fleet";
 
@@ -266,6 +276,27 @@ function LeftPanel({
   );
   const sections = useMemo(() => sectionsForTab(items, tab), [items, tab]);
 
+  /**
+   * Arrow, Home and End move between tabs, which is what a tablist owes a
+   * keyboard. Selection follows focus: each panel is one already-loaded list,
+   * so there is nothing to make the human confirm with a second key.
+   */
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    const next =
+      step !== 0
+        ? TABS[(TABS.findIndex((entry) => entry.value === tab) + step + TABS.length) % TABS.length]
+        : event.key === "Home"
+          ? TABS[0]
+          : event.key === "End"
+            ? TABS[TABS.length - 1]
+            : undefined;
+    if (next === undefined) return;
+    event.preventDefault();
+    setTab(next.value);
+    document.getElementById(tabId(next.value))?.focus();
+  };
+
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-col bg-background">
       <div className="flex min-w-0 shrink-0 items-center gap-1.5 border-b bg-card px-3 py-2 sm:px-4">
@@ -274,7 +305,18 @@ function LeftPanel({
           <ViewButton label="Fleet" active={view === "fleet"} onSelect={() => setView("fleet")} />
         </div>
         {view === "inbox" && (
-          <>
+          /*
+            One flat tablist, not a tab plus a labelled history group: a `tab`
+            must be owned by its `tablist`, so the visual split between live work
+            and history is carried by the flexible spacer alone.
+          */
+          <div
+            role="tablist"
+            aria-label="Inbox state"
+            aria-orientation="horizontal"
+            onKeyDown={onTabKeyDown}
+            className="flex min-w-0 flex-1 items-center gap-0.5"
+          >
             <TabButton
               tab={OPEN_TAB}
               active={tab === "open"}
@@ -283,23 +325,26 @@ function LeftPanel({
               onSelect={() => setTab("open")}
             />
             {/* Pushes history to the far edge, away from the live work. */}
-            <div className="min-w-0 flex-1" />
-            <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Inbox history">
-              {HISTORY_TABS.map((entry) => (
-                <TabButton
-                  key={entry.value}
-                  tab={entry}
-                  active={tab === entry.value}
-                  count={status === "ready" ? counts[entry.value] : null}
-                  compact
-                  onSelect={() => setTab(entry.value)}
-                />
-              ))}
-            </div>
-          </>
+            <div aria-hidden="true" className="min-w-0 flex-1" />
+            {HISTORY_TABS.map((entry) => (
+              <TabButton
+                key={entry.value}
+                tab={entry}
+                active={tab === entry.value}
+                count={status === "ready" ? counts[entry.value] : null}
+                compact
+                onSelect={() => setTab(entry.value)}
+              />
+            ))}
+          </div>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        {...(view === "inbox"
+          ? { role: "tabpanel", id: INBOX_PANEL_ID, "aria-labelledby": tabId(tab) }
+          : {})}
+      >
         {view === "fleet" ? (
           <FleetPanel />
         ) : (
@@ -417,6 +462,11 @@ function ViewButton({ label, active, onSelect }: { label: string; active: boolea
 /**
  * One state tab.
  *
+ * A real `tab`, not a pressed toggle: the three of them select between views of
+ * one list, which is what a screen reader needs told so it can announce "tab 2
+ * of 3" and offer the panel. Roving tabindex keeps the group to a single Tab
+ * stop; the arrow keys that move inside it live on the tablist.
+ *
  * `compact` hides the word and keeps the icon plus the count, which is what
  * lets the two history tabs sit at the right edge of a phone-width header
  * without crowding the Open tab.
@@ -440,7 +490,11 @@ function TabButton({
     <Button
       variant="ghost"
       size="touch"
-      aria-pressed={active}
+      role="tab"
+      id={tabId(tab.value)}
+      aria-selected={active}
+      aria-controls={INBOX_PANEL_ID}
+      tabIndex={active ? 0 : -1}
       onClick={onSelect}
       // The selected tab is marked with the accent as a tint, never a fill:
       // chrome does not get to be the loudest thing on a screen whose whole

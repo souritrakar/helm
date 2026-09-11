@@ -267,7 +267,7 @@ describe("an ask card", () => {
     });
 
     expect(screen.queryByRole("heading", { name: askCard.title })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /^Answered/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Answered/ }));
     expect(within(cardFor(askCard.title)).getByText("Answered: Run it now")).toBeDefined();
   });
 

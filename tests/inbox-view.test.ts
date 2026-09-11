@@ -14,6 +14,7 @@ import {
   isActionable,
   itemsForTab,
   KIND_LABELS,
+  notificationTitle,
   sectionsForTab,
   sortForDisplay,
 } from "@/lib/inbox-view";
@@ -170,6 +171,62 @@ describe("naming what a card is", () => {
     expect(KIND_LABELS.ask).toBe("Question from firstmate");
     expect(KIND_LABELS.merge).toBe("Merge approval");
     expect(KIND_LABELS.credential).toBe("Credential");
+  });
+});
+
+describe("announcing what a card is", () => {
+  it("leads the notification title with the kind, then the summary", () => {
+    expect(notificationTitle("status-decision", "Ship the release")).toBe("Decision needed — Ship the release");
+    expect(notificationTitle("merge", "Land PR 12")).toBe("Merge approval — Land PR 12");
+    expect(notificationTitle("ask", "Which API key?")).toBe("Question from firstmate — Which API key?");
+  });
+
+  it("falls back to the bare title on an unknown kind, so a blocking card still announces", () => {
+    expect(notificationTitle("not-a-kind", "Ship the release")).toBe("Ship the release");
+  });
+});
+
+describe("one decision, one card", () => {
+  const answerable = item({
+    kind: "captain-held",
+    taskId: "backpass-session",
+    title: "Run a backpass pass",
+    respond: { channel: "relay", target: "w1:p1" },
+  });
+  const projection = item({
+    kind: "decision",
+    urgency: "attention",
+    taskId: "backpass-session",
+    title: "Run a backpass pass: captain will trigger it later",
+    respond: { channel: "none" },
+  });
+
+  it("drops the unanswerable projection of a decision another card can answer", () => {
+    expect(itemsForTab([answerable, projection], "open").map((entry) => entry.title)).toEqual([
+      "Run a backpass pass",
+    ]);
+  });
+
+  it("keeps the projection out of the count and the bands too", () => {
+    expect(sectionsForTab([answerable, projection], "open").flatMap((section) => section.items)).toEqual([
+      answerable,
+    ]);
+  });
+
+  it("still hides the projection once its answerable twin has been handled", () => {
+    const handled = { ...answerable, state: "answered", answeredAt: "2026-09-07T00:00:00.000Z" } as InboxItem;
+
+    expect(itemsForTab([handled, projection], "open")).toEqual([]);
+  });
+
+  it("keeps a lone unanswerable decision, because dropping it would hide the decision", () => {
+    expect(itemsForTab([projection], "open").map((entry) => entry.title)).toEqual([projection.title]);
+  });
+
+  it("never drops a gate or approval, whose body is its own information", () => {
+    const gate = item({ kind: "merge", taskId: "backpass-session", title: "Merge gate", respond: { channel: "none" } });
+
+    expect(itemsForTab([answerable, gate], "open").map((entry) => entry.title)).toContain("Merge gate");
   });
 });
 
