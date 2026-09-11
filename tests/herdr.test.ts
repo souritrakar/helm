@@ -554,6 +554,7 @@ describe("isShellPromptLine", () => {
     "#",
     "❯",
     "➜  ~",
+    "user@host:~/firstmate>",
   ])("recognises the shell's own prompt: %j", (line) => {
     expect(isShellPromptLine(line)).toBe(true);
   });
@@ -567,6 +568,8 @@ describe("isShellPromptLine", () => {
     "Approve this plan? [y/N]",
     "# Running tests",
     "> continue",
+    ">",
+    "> ",
     "error: cannot read /tmp/x",
     "",
     "   ",

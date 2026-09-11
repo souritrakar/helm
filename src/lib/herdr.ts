@@ -385,7 +385,10 @@ export function isShellPromptLine(line: string): boolean {
   if (leading !== null) return PROMPT_TOKEN.test(trimmed.slice(leading[0].length));
   if (!/[$%#>❯➜»]$/.test(trimmed)) return false;
   const head = PROMPT_HEAD.exec(trimmed.slice(0, -1));
-  return head !== null && PROMPT_TOKEN.test(head[1] ?? "");
+  const promptToken = head?.[1] ?? "";
+  return head !== null
+    && PROMPT_TOKEN.test(promptToken)
+    && (trimmed.at(-1) !== ">" || promptToken !== "");
 }
 
 /** List panes, optionally within one workspace. */
