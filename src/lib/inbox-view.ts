@@ -129,10 +129,17 @@ export const URGENCY_SECTION_LABELS: Record<InboxUrgency, string> = {
   fyi: "For information",
 };
 
-/** A run of cards under one header. `label` is null when the tab needs none. */
+/**
+ * A run of cards under one header. `label` is null when the tab needs none.
+ *
+ * `urgency` is what the band IS, so the header can carry the matching status
+ * hue without re-deriving it from `key` — a string match there would put an
+ * amber dot over a run of blocking cards the first time a key is renamed.
+ */
 export interface InboxSection {
   readonly key: string;
   readonly label: string | null;
+  readonly urgency: InboxUrgency | null;
   readonly items: readonly InboxItem[];
 }
 
@@ -146,13 +153,13 @@ export interface InboxSection {
 export function sectionsForTab(items: readonly InboxItem[], tab: InboxTab): InboxSection[] {
   const ordered = itemsForTab(items, tab);
   if (tab !== "open") {
-    return ordered.length === 0 ? [] : [{ key: tab, label: null, items: ordered }];
+    return ordered.length === 0 ? [] : [{ key: tab, label: null, urgency: null, items: ordered }];
   }
   const sections: InboxSection[] = [];
   for (const urgency of ["blocking", "attention", "fyi"] as const) {
     const band = ordered.filter((item) => item.urgency === urgency);
     if (band.length > 0) {
-      sections.push({ key: urgency, label: URGENCY_SECTION_LABELS[urgency], items: band });
+      sections.push({ key: urgency, label: URGENCY_SECTION_LABELS[urgency], urgency, items: band });
     }
   }
   return sections;

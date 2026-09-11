@@ -63,7 +63,11 @@ These are not style preferences. Each one protects something that fails silently
    (`inbox-notifications.tsx`).
 
 One page load checks all three: `document.body.scrollHeight === innerHeight`, the xterm row
-count is tens rather than thousands, no row span carries a `letter-spacing`, console empty.
+count is tens rather than thousands, no row span carries a `letter-spacing` **above ~0.1px in
+magnitude**, console empty. The threshold matters: a healthy mirror carries a sub-pixel
+`letter-spacing` (measured at `-0.0125px` on every row) as xterm's ordinary cell-rounding
+compensation. Only a value large enough to see is the font-measurement mismatch trap — reading
+"any letter-spacing at all" as the failure sends a future agent to fix a working pane.
 
 ### Shape decisions worth knowing
 
@@ -83,16 +87,41 @@ count is tens rather than thousands, no row span carries a `letter-spacing`, con
   surfaced; the predicate and Herdr text-read contract are owned by
   [`docs/adapters.md`](docs/adapters.md#why-agent-state-reads-the-pane-before-it-raises-a-blocker).
 - **A card must never hide what the human needs to act on.** Titles wrap and are never clipped;
-  bodies collapse behind a CSS line clamp with "Show more", so the full text stays in the DOM.
-  Adapters must pass the full title and body through: firstmate spells "no value" as a literal
-  `-` as often as it writes null, so use `present()` in `src/lib/adapters/state.ts` rather than
-  `??`, or the body renders as a bare dash.
+  bodies collapse behind a max-height disclosure with "Show more", so the full text stays in the
+  DOM. Adapters must pass the full title and body through: firstmate spells "no value" as a
+  literal `-` as often as it writes null, so use `present()` in `src/lib/adapters/state.ts`
+  rather than `??`, or the body renders as a bare dash. A `…` at the end of a rendered title
+  comes from firstmate's fold upstream, not from helm — check `scrollWidth === clientWidth`
+  before treating one as a clipping bug.
+- **The card is the product.** `inbox-card.tsx` and a `fleet-panel.tsx` row are deliberately the
+  same object — white `bg-card` on the tinted page, `rounded-xl`, `shadow-card`, a 32px tinted
+  kind/health glyph — so one cockpit reads as one product. Three constraints hold it together:
+  identity sits on its OWN full-width row (a left icon gutter cost 44px of measure on every line
+  and turned a five-line phone title into seven); everything actionable sits on one recessed
+  footer band; and that band is a single wrapping row whose groups need `basis-full @sm:basis-auto`
+  or the escapes overflow the card at phone width instead of wrapping.
 - **Design tokens live in `src/app/globals.css`**, not at call sites: a five-step type scale
-  (`text-meta|ui|body|title|display`, with leading baked into the step), status hues
+  (`text-meta|ui|body|title|display`, with leading baked into the step — `ui` and `body` share
+  14px and differ only in leading, so a multi-line title takes `body`), status hues
   (`urgency-blocking|attention|quiet`, `success`, `info`) that both the inbox and the fleet
-  index into, and `foreground-secondary` for body copy that is content rather than meta.
-  Chrome never wears the filled `default` button variant — the strongest mark on screen belongs
-  to a card's answer, not to a view toggle.
+  index into, `foreground-secondary` for body copy that is content rather than meta, plus
+  `shadow-card|raised` elevation and the `animate-card-in` / `--ease-out-quint` motion pair.
+  Light is the primary theme. Chrome never wears the filled `default` button variant — the
+  strongest mark on screen belongs to a card's answer, not to a view toggle — and an engaged
+  toggle is marked with the accent as a TINT.
+- **A status surface is a `*-tint` token, never `bg-<hue>/12`.** An alpha of the hue only works
+  in one theme direction: over a white card it darkens and contrast holds, but over a DARK card
+  the same tint LIGHTENS it toward the already-light dark-mode hue — `urgency-blocking` on its
+  own 12% tint measured 3.79:1, under AA, while looking correct in light mode. The fix is a
+  tonal container per theme (`urgency-blocking-tint`, `success-tint`, `primary-tint`, …), and a
+  filled status badge needs an on-hue ink token too — `text-white` on the dark-mode red is
+  2.89:1. `tests/design-tokens-contrast.test.ts` reads the real values out of `globals.css`,
+  proves both themes at AA, and fails the banned `bg-<hue>/<alpha>` form, so this is enforced
+  rather than remembered. Do not hand-check it in the browser: `getComputedStyle` returns
+  `oklch()`/`lab()`, so an in-page contrast probe silently reports nonsense.
+- **Motion is affordance, never decoration**, so `globals.css` neutralises all of it under
+  `prefers-reduced-motion` in one `@layer base` rule. Per-component `motion-reduce:` classes are
+  belt-and-braces on top of that, not the mechanism.
 - **Fleet view** is `src/lib/fleet-view.ts` + `GET /api/fleet`. It reads `PaneDirectory`'s
   CACHED snapshot — `fm-fleet-snapshot.sh` budgets up to 180s, so never run the seam per
   request.
