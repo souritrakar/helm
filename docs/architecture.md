@@ -165,18 +165,28 @@ offered shortcuts.
 ## Add to terminal
 
 Every card carries one control that answers nothing: it renders the card as a
-labelled context block and appends it to the terminal composer, so the operator
+labelled context block and attaches it to the terminal composer, so the operator
 can write an instruction around it.
 
 - `src/lib/inbox-context.ts` builds the block. Pure, and **one line** — the
   composer posts to `/api/term/input`, which submits the line with a trailing
   Enter, so a newline would become a second pane submission. Every field is
   flattened and control characters are stripped there rather than refused later.
+  `composePaneLine` joins the attached blocks and the human's own words into
+  that one line at SEND time, context first.
 - `src/components/terminal-composer.ts` carries it across the tree. The card
-  publishes; the shell un-folds the terminal; the composer appends. A block
+  publishes; the shell un-folds the terminal; the composer attaches. A context
   published while the terminal is folded away is queued, because the reveal is
   what mounts the subscriber.
-- The draft is never overwritten. The block appends and the caret lands after it.
+- **The block never goes into the input.** It rides above it as a removable
+  chip, and the input stays the human's own sentence. One block is several
+  hundred characters, and pasting that into a one-line field scrolls the
+  human's words out of sight: the field stops reading as a composer and starts
+  reading as a box that holds the card, which is how the captain reported it.
+  The chip is display text; the full block still travels on send.
+- Attaching focuses the composer, and so does removing a chip — otherwise the
+  next keystroke goes to a button, or to `document.body` where the shell's
+  single-key shortcuts eat it. Attaching the same card twice attaches it once.
 
 ## D-C answer routing
 

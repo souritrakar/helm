@@ -3,11 +3,11 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ChevronDown, CornerDownLeft, Send, WifiOff } from "lucide-react";
+import { ChevronDown, CornerDownLeft, Send, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { onTerminalContext } from "@/components/terminal-composer";
-import { appendContext } from "@/lib/inbox-context";
+import { onTerminalContext, type TerminalContext } from "@/components/terminal-composer";
+import { composePaneLine } from "@/lib/inbox-context";
 
 export interface TerminalPaneInfo {
   id: string;
@@ -59,23 +59,38 @@ export function TerminalPane() {
   const [notice, setNotice] = useState("");
   const [sendError, setSendError] = useState("");
   const [text, setText] = useState("");
+  const [contexts, setContexts] = useState<readonly TerminalContext[]>([]);
   const [caretBump, setCaretBump] = useState(0);
 
   /**
-   * Take an inbox card's context block into the draft.
+   * Attach an inbox card to the message being written.
    *
-   * Appends — the draft is the human's and is never overwritten — then bumps a
-   * counter so the caret lands after the block once React has committed the new
-   * value, leaving them ready to write their instruction around it.
+   * The card rides ABOVE the input as a removable chip rather than inside it:
+   * one block is several hundred characters of machine text, and pasting that
+   * into a single-line field leaves the human's own words scrolled out of
+   * sight — the field stops reading as a composer and starts reading as a box
+   * that holds the card. The chips carry the context, the input stays the
+   * human's, and {@link composePaneLine} sends both as one line.
    */
   useEffect(
     () =>
-      onTerminalContext((block) => {
-        setText((current) => appendContext(current, block));
+      onTerminalContext((context) => {
+        setContexts((current) =>
+          current.some((attached) => attached.text === context.text) ? current : [...current, context],
+        );
         setCaretBump((value) => value + 1);
       }),
     [],
   );
+
+  /**
+   * Put the caret back in the composer after anything moved it.
+   *
+   * Attaching a card and removing a chip are both button presses, so without
+   * this the next keystroke goes to a button — or, once a removed chip's button
+   * is gone, to `document.body`, where the shell's single-key shortcuts eat it.
+   */
+  const focusComposer = useCallback(() => setCaretBump((value) => value + 1), []);
 
   useEffect(() => {
     if (caretBump === 0) return;
@@ -262,11 +277,22 @@ export function TerminalPane() {
     return false;
   };
 
+  // Attached context is part of the message, so a card on its own is a valid
+  // send: the human may want the pane to see the card and nothing else.
+  const line = composePaneLine(contexts.map((context) => context.text), text);
+
   const submit = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
-    const value = text.trim();
-    if (value === "") return;
-    if (await post({ text: value })) setText("");
+    if (line === "") return;
+    if (await post({ text: line })) {
+      setText("");
+      setContexts([]);
+    }
+  };
+
+  const removeContext = (target: TerminalContext): void => {
+    setContexts((current) => current.filter((context) => context !== target));
+    focusComposer();
   };
 
   /**
@@ -277,7 +303,7 @@ export function TerminalPane() {
    */
   const onComposerKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
     const key = KEY_SHORTCUTS[event.key];
-    if (key === undefined || event.currentTarget.value !== "") return;
+    if (key === undefined || line !== "") return;
     event.preventDefault();
     void post({ key });
   };
@@ -314,27 +340,50 @@ export function TerminalPane() {
       className="min-h-0 min-w-0 flex-1 overflow-hidden p-1.5 sm:p-2"
       aria-label="Live terminal mirror"
     />
-    <form onSubmit={submit} className="flex shrink-0 items-center gap-2 border-t border-zinc-800 p-2 sm:p-3">
-      <input
-        ref={composerRef}
-        name="pane-composer"
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={onComposerKeyDown}
-        // Never disabled: an inbox card can drop a context block here before a
-        // pane has resolved, and a disabled field cannot take focus or a caret,
-        // so the block would land somewhere the human cannot see or edit.
-        placeholder={selectedPane === undefined ? "No pane selected" : "Type to this pane…"}
-        aria-label="Send to the selected pane"
-        className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400 disabled:opacity-50 sm:text-sm"
-      />
-      <button type="button" onClick={() => void post({ key: "c-c" })} disabled={selectedPaneId === null} className="shrink-0 rounded-md border border-zinc-700 px-2 py-2 font-mono text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" title="Interrupt the pane (Ctrl-C)">^C</button>
-      <button type="button" onClick={() => void post({ key: "escape" })} disabled={selectedPaneId === null} className="hidden shrink-0 rounded-md border border-zinc-700 px-2 py-2 font-mono text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40 sm:block" title="Send Escape">esc</button>
-      <button type="submit" disabled={selectedPaneId === null || text.trim() === ""} className="inline-flex shrink-0 items-center gap-1 rounded-md bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40">
-        <Send className="size-4 shrink-0" aria-hidden="true" />
-        <span className="hidden sm:inline">Send</span>
-        <CornerDownLeft className="size-3.5 shrink-0 opacity-60 sm:hidden" aria-hidden="true" />
-      </button>
+    <form onSubmit={submit} className="flex shrink-0 flex-col gap-2 border-t border-zinc-800 p-2 sm:p-3">
+      {contexts.length > 0 && (
+        // Above the input, not inside it: the chips say WHICH cards are
+        // attached, and the row below stays the human's own sentence.
+        <ul role="list" aria-label="Cards attached to this message" className="flex min-w-0 flex-wrap gap-1.5">
+          {contexts.map((context) => (
+            <li key={context.text} className="flex min-w-0 max-w-full items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 py-0.5 pl-2 pr-0.5 text-xs text-zinc-300">
+              <span className="min-w-0 truncate" title={context.label}>{context.label}</span>
+              <button
+                type="button"
+                onClick={() => removeContext(context)}
+                aria-label={`Remove "${context.label}" from this message`}
+                className="relative shrink-0 rounded p-1 text-zinc-400 hover:text-zinc-100"
+              >
+                <X className="size-3 shrink-0" aria-hidden="true" />
+                {/* A 12px glyph is not a tap target; the halo makes it 44px. */}
+                <span className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,2.75rem)] -translate-x-1/2 -translate-y-1/2 pointer-fine:hidden" aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex min-w-0 items-center gap-2">
+        <input
+          ref={composerRef}
+          name="pane-composer"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={onComposerKeyDown}
+          // Never disabled: an inbox card can attach itself here before a pane
+          // has resolved, and a disabled field cannot take focus or a caret, so
+          // the human would be left unable to write the instruction around it.
+          placeholder={selectedPane === undefined ? "No pane selected" : contexts.length > 0 ? "Write your message…" : "Type to this pane…"}
+          aria-label="Send to the selected pane"
+          className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400 disabled:opacity-50 sm:text-sm"
+        />
+        <button type="button" onClick={() => void post({ key: "c-c" })} disabled={selectedPaneId === null} className="shrink-0 rounded-md border border-zinc-700 px-2 py-2 font-mono text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40" title="Interrupt the pane (Ctrl-C)">^C</button>
+        <button type="button" onClick={() => void post({ key: "escape" })} disabled={selectedPaneId === null} className="hidden shrink-0 rounded-md border border-zinc-700 px-2 py-2 font-mono text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40 sm:block" title="Send Escape">esc</button>
+        <button type="submit" disabled={selectedPaneId === null || line === ""} className="inline-flex shrink-0 items-center gap-1 rounded-md bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40">
+          <Send className="size-4 shrink-0" aria-hidden="true" />
+          <span className="hidden sm:inline">Send</span>
+          <CornerDownLeft className="size-3.5 shrink-0 opacity-60 sm:hidden" aria-hidden="true" />
+        </button>
+      </div>
     </form>
   </section>;
 }

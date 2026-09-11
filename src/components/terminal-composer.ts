@@ -12,33 +12,45 @@
  * Two signals travel it:
  *
  * - **reveal** — the shell un-folds the terminal, which mounts the composer.
- * - **append** — the composer appends the block to the human's draft.
+ * - **attach** — the composer attaches the card to the message being written.
  *
- * A block published while no composer is mounted is queued, not dropped: the
- * reveal that accompanies it is what mounts the subscriber, so the append
+ * A context published while no composer is mounted is queued, not dropped: the
+ * reveal that accompanies it is what mounts the subscriber, so the attach
  * always arrives second.
  */
 
-type AppendListener = (block: string) => void;
+/**
+ * One card, attached to the message the human is writing.
+ *
+ * `text` is the full one-line block that will travel to the pane; `label` is
+ * only what the chip says, so the composer can name the card in a few words
+ * without the human having to read 700 characters of it back.
+ */
+export interface TerminalContext {
+  readonly label: string;
+  readonly text: string;
+}
+
+type AttachListener = (context: TerminalContext) => void;
 
 /** At most one composer exists, so the newest subscriber owns the channel. */
-let composer: AppendListener | null = null;
-let queue: string[] = [];
+let composer: AttachListener | null = null;
+let queue: TerminalContext[] = [];
 const revealListeners = new Set<() => void>();
 
 /**
- * Ask the shell to show the terminal, then put `block` in the composer draft.
+ * Ask the shell to show the terminal, then attach `context` to the draft.
  *
  * Reveal is published first so a folded terminal mounts its composer before the
- * block is delivered.
+ * context is delivered.
  */
-export function addToTerminalContext(block: string): void {
+export function addToTerminalContext(context: TerminalContext): void {
   for (const listener of revealListeners) listener();
   if (composer === null) {
-    queue.push(block);
+    queue.push(context);
     return;
   }
-  composer(block);
+  composer(context);
 }
 
 /**
@@ -46,11 +58,11 @@ export function addToTerminalContext(block: string): void {
  *
  * Call from an effect: the drain invokes `listener` synchronously.
  */
-export function onTerminalContext(listener: AppendListener): () => void {
+export function onTerminalContext(listener: AttachListener): () => void {
   composer = listener;
   const pending = queue;
   queue = [];
-  for (const block of pending) listener(block);
+  for (const context of pending) listener(context);
   return () => {
     if (composer === listener) composer = null;
   };

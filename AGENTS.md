@@ -77,6 +77,11 @@ count is tens rather than thousands, no row span carries a `letter-spacing`, con
   [`docs/architecture.md`](docs/architecture.md#two-halves-of-the-same-conversation) and
   [`docs/architecture.md`](docs/architecture.md#add-to-terminal); keep their source contracts,
   one-line pane constraint, and adapter guidance there rather than copying them here.
+- **Terminal context stays a chip above the composer.** The full contract, including focus and
+  one-line send behavior, is owned by [`docs/architecture.md`](docs/architecture.md#add-to-terminal).
+- **A blocked pane is not necessarily a blocked agent.** Keep unrecognised last visible lines
+  surfaced; the predicate and Herdr text-read contract are owned by
+  [`docs/adapters.md`](docs/adapters.md#why-agent-state-reads-the-pane-before-it-raises-a-blocker).
 - **A card must never hide what the human needs to act on.** Titles wrap and are never clipped;
   bodies collapse behind a CSS line clamp with "Show more", so the full text stays in the DOM.
   Adapters must pass the full title and body through: firstmate spells "no value" as a literal

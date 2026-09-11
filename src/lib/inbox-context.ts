@@ -120,12 +120,16 @@ function describeChannel(item: InboxItem): string | undefined {
 }
 
 /**
- * Append a context block to whatever the human has already typed.
+ * Join the attached context blocks and the human's own message into one line.
  *
- * Never overwrites: the draft is the human's, and the block is additive. A
- * single space joins them so the composer reads as one sentence-in-progress.
+ * Context comes first and the human's words come last, so the instruction reads
+ * as a reaction to the quoted cards above it. Both halves travel in the same
+ * submission, which is what makes the pane see one message rather than two.
+ *
+ * The draft is flattened here as well as the blocks: it is the only segment
+ * helm did not build itself, and `/api/term/input` refuses a control character
+ * rather than splitting the line at it.
  */
-export function appendContext(draft: string, block: string): string {
-  const existing = draft.trimEnd();
-  return existing === "" ? block : `${existing} ${block}`;
+export function composePaneLine(blocks: readonly string[], draft: string): string {
+  return [...blocks, draft].map(flattenField).filter((part) => part !== "").join(" ");
 }

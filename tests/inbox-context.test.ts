@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { appendContext, flattenField, inboxItemContext } from "@/lib/inbox-context";
+import { composePaneLine, flattenField, inboxItemContext } from "@/lib/inbox-context";
 import { parseTerminalInput } from "@/lib/request";
 import type { InboxItem } from "@/lib/types";
 
@@ -181,27 +181,43 @@ describe("the context block", () => {
   });
 });
 
-describe("appending to the draft", () => {
-  it("never overwrites what the human is already typing", () => {
-    expect(appendContext("please handle", "[helm card — Note (fyi)] Title: x")).toBe(
-      "please handle [helm card — Note (fyi)] Title: x",
+describe("composing the pane line", () => {
+  it("puts the human's words last, so they read as a reaction to the cards", () => {
+    expect(composePaneLine(["[helm card — Note (fyi)] Title: x"], "please handle")).toBe(
+      "[helm card — Note (fyi)] Title: x please handle",
     );
   });
 
-  it("adds no leading space to an empty draft", () => {
-    expect(appendContext("", "[block]")).toBe("[block]");
-    expect(appendContext("   ", "[block]")).toBe("[block]");
+  it("sends the message alone when nothing is attached", () => {
+    expect(composePaneLine([], "ship it")).toBe("ship it");
   });
 
-  it("does not double the separating space", () => {
-    expect(appendContext("hello ", "[block]")).toBe("hello [block]");
+  it("sends the attached cards alone when the human typed nothing", () => {
+    expect(composePaneLine(["[block]"], "")).toBe("[block]");
+    expect(composePaneLine(["[block]"], "   ")).toBe("[block]");
   });
 
-  it("appends a second block after the first, so several cards can be attached", () => {
-    const once = appendContext("", inboxItemContext(BASE));
-    const twice = appendContext(once, inboxItemContext({ ...BASE, id: "asks:other" }));
+  it("is empty when there is nothing to send at all", () => {
+    expect(composePaneLine([], "")).toBe("");
+    expect(composePaneLine([], "  ")).toBe("");
+  });
 
-    expect(twice.startsWith(once)).toBe(true);
-    expect(twice).toContain("Card: asks:other");
+  it("separates several attached cards with a single space", () => {
+    const line = composePaneLine(
+      [inboxItemContext(BASE), inboxItemContext({ ...BASE, id: "asks:other" })],
+      "which of these first?",
+    );
+
+    expect(line).toContain(`Card: ${BASE.id}`);
+    expect(line).toContain("Card: asks:other");
+    expect(line.endsWith("which of these first?")).toBe(true);
+    expect(line).not.toMatch(/ {2}/);
+  });
+
+  it("flattens the human's own words too — the pane input schema takes one line", () => {
+    const line = composePaneLine(["[block]"], "hold on\nthen\tgo");
+
+    expect(line).toBe("[block] hold on then go");
+    expect(() => parseTerminalInput({ paneId: "w1:p5", text: line })).not.toThrow();
   });
 });

@@ -67,8 +67,9 @@ their offered options and typed replies relay verbatim to the configured or
 discovered firstmate pane. Keyed status decisions answer through
 `fm-send.sh --resolve-key`. Captain-held, merge, credential, and other
 freeform cards also relay; a card with no reachable relay pane is honestly
-read-only. Every card can append its labelled, one-line context to the
-terminal composer without replacing the current draft. Answered and dismissed
+read-only. Every card can attach its labelled, one-line context as a removable
+chip above the terminal composer; its full context and the current draft send
+together as one line. Answered and dismissed
 history (including each card's captured body) and the response audit live
 under `HELM_STATE_DIR`, never under `$FM_HOME`. The Fleet panel summarizes
 cached task health and flags work that needs you.

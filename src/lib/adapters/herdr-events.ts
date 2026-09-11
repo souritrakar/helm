@@ -1,7 +1,7 @@
 /** Read-only Herdr subscription adapters (Lane D2). */
 import type { HelmConfig, OutputMatchConfig } from "../config";
 import { relay, type StateAdapterDeps } from "./state";
-import { agentList, subscribeEvents, type HerdrEventStream } from "../herdr";
+import { agentList, isShellPromptLine, paneLastLine, subscribeEvents, type HerdrEventStream } from "../herdr";
 import { inboxItemId, type InboxAdapter, type InboxItem } from "../types";
 
 function item(source: string, naturalKey: string, fields: Omit<InboxItem, "id" | "source" | "state" | "openedAt">): InboxItem {
@@ -20,11 +20,28 @@ function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
     async start(ctx) {
       const blocked = new Map<string, InboxItem>();
       const tombstoned = new Set<string>();
+      /**
+       * Record or clear one pane's blocker.
+       *
+       * A pane that {@link blockedItem} refuses is DELETED rather than left
+       * alone: this runs on reconcile as well as on a status change, so a card
+       * raised before the worker exited has to come back out of the open set.
+       */
+      const setBlocked = async (
+        into: Map<string, InboxItem>,
+        paneId: string,
+        agent: string | null | undefined,
+        title: string | null | undefined,
+      ): Promise<void> => {
+        const card = await blockedItem(config, paneId, agent, title, deps);
+        if (card === null) into.delete(paneId);
+        else into.set(paneId, card);
+      };
       const agents = await agentList(config);
       const panes = new Set(agents.map((agent) => agent.pane_id));
-      for (const agent of agents.filter((candidate) => candidate.agent_status === "blocked")) {
-        blocked.set(agent.pane_id, blockedItem(agent.pane_id, agent.terminal_title ?? agent.agent, deps));
-      }
+      await Promise.all(agents
+        .filter((candidate) => candidate.agent_status === "blocked")
+        .map((agent) => setBlocked(blocked, agent.pane_id, agent.agent, agent.terminal_title)));
       ctx.emit([...blocked.values()]);
       const unsubscribeRelayTarget = deps.onRelayTargetChanged?.(() => ctx.emit(refreshRelay(blocked, deps))) ?? (() => undefined);
       let stopped = false;
@@ -55,15 +72,15 @@ function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
             await eventBarrier;
             if (stopped || generation !== ownGeneration) return;
             if (event.event === "pane.agent_status_changed") {
-              const { pane_id: paneId, agent_status: status, title, agent } = event.data;
-              if (status === "blocked") blocked.set(paneId, blockedItem(paneId, title ?? agent, deps));
+              const { pane_id: paneId, agent_status: status, title, agent, display_agent: displayAgent } = event.data;
+              if (status === "blocked") await setBlocked(blocked, paneId, agent ?? displayAgent, title);
               else blocked.delete(paneId);
               ctx.emit([...blocked.values()]);
             } else if (event.event === "pane_created") {
               const pane = event.data.pane;
               if (tombstoned.has(pane.pane_id)) return;
               panes.add(pane.pane_id);
-              if (pane.agent_status === "blocked") blocked.set(pane.pane_id, blockedItem(pane.pane_id, pane.terminal_title ?? pane.agent, deps));
+              if (pane.agent_status === "blocked") await setBlocked(blocked, pane.pane_id, pane.agent, pane.terminal_title);
               else blocked.delete(pane.pane_id);
               ctx.emit([...blocked.values()]);
               queueSubscription();
@@ -100,8 +117,10 @@ function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
         for (const agent of liveAgents) {
           if (tombstoned.has(agent.pane_id)) continue;
           panes.add(agent.pane_id);
-          if (agent.agent_status === "blocked") blocked.set(agent.pane_id, blockedItem(agent.pane_id, agent.terminal_title ?? agent.agent, deps));
         }
+        await Promise.all(liveAgents
+          .filter((agent) => !tombstoned.has(agent.pane_id) && agent.agent_status === "blocked")
+          .map((agent) => setBlocked(blocked, agent.pane_id, agent.agent, agent.terminal_title)));
         ctx.emit([...blocked.values()]);
       };
       const forgetMissingPane = (cause: unknown): boolean => {
@@ -143,12 +162,54 @@ function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
   };
 }
 
-function blockedItem(paneId: string, title: string | null | undefined, deps: StateAdapterDeps): InboxItem {
+/**
+ * The blocker card for one pane, or `null` when there is nothing to report.
+ *
+ * Herdr's `blocked` means "this pane is waiting for input", which is true of a
+ * genuinely stuck agent AND of a torn-down worker's leftover shell sitting at
+ * its own prompt. The last VISIBLE line is what separates them, and it is the
+ * ONLY thing that does — the terminal title does not, because a live and
+ * genuinely blocked `codex` still shows the shell's own `user@host:cwd` title:
+ * it never set one of its own.
+ *
+ * The line that IS holding the pane becomes the card body, so the human can see
+ * what it is waiting for instead of one constant sentence about every blocker.
+ * That line is untrusted pane output: display text, never an instruction.
+ */
+async function blockedItem(
+  config: HelmConfig,
+  paneId: string,
+  agent: string | null | undefined,
+  title: string | null | undefined,
+  deps: StateAdapterDeps,
+): Promise<InboxItem | null> {
+  const lastLine = await paneLastLine(config, paneId);
+  if (lastLine !== undefined && isShellPromptLine(lastLine)) return null;
+  const named = agent?.trim() ?? "";
   return item("agent-state", paneId, {
-    kind: "blocker", urgency: "blocking", title: title ?? `Agent blocked in ${paneId}`,
-    detail: "Herdr reported a blocked agent.", options: [], allowFreeform: true,
+    kind: "blocker", urgency: "blocking",
+    // A shell-prompt title describes nothing, so name the agent and the pane
+    // rather than repeating `user@host:cwd` as if it were the card's subject.
+    title: agentTitle(title) ?? (named === "" ? `Agent blocked in ${paneId}` : `${named} is waiting for input in ${paneId}`),
+    detail: lastLine ?? "Herdr reported a blocked agent.", options: [], allowFreeform: true,
     respond: relay(deps), evidence: [],
   });
+}
+
+/**
+ * The pane's own title, unless the SHELL wrote it rather than the agent.
+ *
+ * A prompt in a title has no trailing sigil and spaces its colon out, so it is
+ * normalised back to the line form before the shared test sees it. Requiring a
+ * location (`@`, `~`, `/`) keeps a short one-word title an AGENT chose
+ * (`codex`) out of this — only a location is evidence the shell wrote it.
+ */
+function agentTitle(title: string | null | undefined): string | undefined {
+  const trimmed = title?.trim() ?? "";
+  if (trimmed === "") return undefined;
+  if (/^-?(?:ba|z|k|c|tc|da|fi)?sh$/.test(trimmed)) return undefined;
+  const asPromptLine = `${trimmed.replace(/\s*:\s*/, ":")}$`;
+  return /[@~/]/.test(trimmed) && isShellPromptLine(asPromptLine) ? undefined : trimmed;
 }
 
 function outputMatch(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {

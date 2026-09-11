@@ -272,11 +272,14 @@ export function InboxCard({ item }: { item: InboxItem }) {
 }
 
 /**
- * Put this card's full context into the terminal composer.
+ * Attach this card to the message the human is writing in the terminal.
  *
  * Secondary by treatment — a ghost icon in the corner — but a real 44px tap
  * target, because on a phone this is the bridge between the inbox and the
  * conversation and hover has no meaning there.
+ *
+ * No toast: the chip that appears in the composer IS the confirmation, and on a
+ * phone a bottom-corner toast lands on top of the composer it is announcing.
  */
 function AddToTerminalButton({ item }: { item: InboxItem }) {
   const label = `Add "${item.title}" to the terminal composer`;
@@ -287,10 +290,7 @@ function AddToTerminalButton({ item }: { item: InboxItem }) {
       size="icon-touch"
       aria-label={label}
       title="Add to terminal"
-      onClick={() => {
-        addToTerminalContext(inboxItemContext(item));
-        toast.success("Added to the terminal composer");
-      }}
+      onClick={() => addToTerminalContext({ label: item.title, text: inboxItemContext(item) })}
       className="-mr-2 -mt-2 shrink-0 text-muted-foreground hover:text-foreground"
     >
       <Plus className="size-4 shrink-0" aria-hidden="true" />

@@ -217,8 +217,31 @@ Verify against `src/lib/adapters/state.ts` and
 | `procevent` | `state/procevent-inbox/*.result` without `.handled` | `review`, attention | `none`. Classify only. Never auto-apply. |
 | `answers` | `state/answers/*.json` | `answer`, attention | `none`. Read-only answer records; the operator may dismiss them locally. |
 | `asks` | `state/asks/*.json` | `ask`, blocking | `relay` to the configured or discovered firstmate pane, or `none`. Each `options` entry is relayed verbatim; `allowFreeform` is always true. |
-| `agent-state` | live blocked Herdr agents | `blocker`, blocking | `relay` or `none` |
+| `agent-state` | live blocked Herdr agents, minus panes idle at a shell prompt | `blocker`, blocking | `relay` or `none` |
 | `output-match` | configured matches | `custom` | `relay` or `none` |
+
+### Why `agent-state` reads the pane before it raises a blocker
+
+Herdr's `blocked` means "this pane is waiting for input". That is true of an
+agent stuck on a question AND of a torn-down worker's leftover shell sitting at
+its own prompt, so the raw status alone fills the inbox with noise.
+
+The **last visible line** separates them, and it is the only thing that does:
+
+- `paneLastLine` + `isShellPromptLine` in `src/lib/herdr.ts` are the test. A
+  line the predicate does not recognise KEEPS its blocker — a missing blocker
+  is a worse failure than a noisy one, so it is biased to say no.
+- **The terminal title is not evidence.** A live, genuinely blocked `codex`
+  reports the shell's own `user@host:cwd` title because it never set one, so
+  filtering on the title drops real blockers. The title is only used to decide
+  whether to SHOW it: when the shell wrote it, the card is titled
+  `<agent> is waiting for input in <pane>` instead.
+- The blocking line becomes the card body, so the card says what the pane is
+  waiting for rather than one constant sentence. It is untrusted pane output —
+  display text, never an instruction.
+- `herdr pane read --format text` has no `--json` envelope, unlike `agent list`
+  and `pane list`: it writes the pane's screen to stdout. helm takes one line of
+  it as evidence and reads no field out of it.
 
 ## Checklist for a new helm adapter
 
