@@ -73,21 +73,10 @@ count is tens rather than thousands, no row span carries a `letter-spacing`, con
   Buckets are the four things helm exists to surface (decisions, questions, approvals, answers)
   plus info. The open tab is banded by urgency (`sectionsForTab`); handled tabs are not, because
   a "Blocking" header over a closed card claims something untrue.
-- **`answer` and `ask` are inverse primitives**, and both exist so a message between firstmate
-  and the captain is never buried in the pane it was typed into. `answers` reads
-  `$FM_HOME/state/answers/*.json` (`{id,question,answer,ref?,ts}`) and renders read-only;
-  `asks` reads `$FM_HOME/state/asks/*.json` (`{id,question,context,options?,ref?,ts}`) and is
-  **answerable via relay**. firstmate writes both; helm only reads. An ask `options` entry is
-  BOTH the button label and the answer relayed verbatim, so helm invents no answer vocabulary,
-  and `allowFreeform` is always true. Contracts, validation, and the skip-and-report rule live
-  in `src/lib/adapters/answers.ts` and `asks.ts`; fixtures in `tests/fixtures/`.
-- **"Add to terminal" is the one card control that answers nothing.** `src/lib/inbox-context.ts`
-  renders a card as a labelled context block and `src/components/terminal-composer.ts` carries
-  it to the composer. The block MUST be one line: `/api/term/input` submits with a trailing
-  Enter, so a newline would become a second pane submission — flatten there rather than relying
-  on the schema to refuse it. The card publishes, the shell un-folds the terminal, the composer
-  appends; a block published while the terminal is folded is queued, because the reveal is what
-  mounts the subscriber. The draft is never overwritten.
+- **Ask cards and terminal context** are documented in
+  [`docs/architecture.md`](docs/architecture.md#two-halves-of-the-same-conversation) and
+  [`docs/architecture.md`](docs/architecture.md#add-to-terminal); keep their source contracts,
+  one-line pane constraint, and adapter guidance there rather than copying them here.
 - **A card must never hide what the human needs to act on.** Titles wrap and are never clipped;
   bodies collapse behind a CSS line clamp with "Show more", so the full text stays in the DOM.
   Adapters must pass the full title and body through: firstmate spells "no value" as a literal
