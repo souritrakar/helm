@@ -330,6 +330,64 @@ export async function agentList(cfg: HelmConfig): Promise<HerdrAgent[]> {
   return validate(agentListSchema, parseJson(result.stdout, label), label).result.agents;
 }
 
+/**
+ * The last line the pane has actually printed, or `undefined`.
+ *
+ * `visible` rather than `recent`: what is ON SCREEN is what the pane is sitting
+ * at, which is the only thing that distinguishes an agent waiting for an answer
+ * from a shell waiting for a command. Blank rows are skipped — the viewport is
+ * padded to its full height — and the line is trimmed, because a terminal pads
+ * its columns and that indentation means nothing on a card.
+ *
+ * A read failure is `undefined`, never a throw: this is corroborating evidence
+ * for a card, and a pane that cannot be read must not take the adapter down.
+ *
+ * Unlike `agent list` and `pane list`, `pane read` has no `--json` envelope —
+ * `--format text` writes the pane's own screen to stdout. That is its contract,
+ * and there is no record here to mis-parse: helm takes one line of terminal
+ * output as display evidence and reads no field out of it.
+ */
+export async function paneLastLine(cfg: HelmConfig, paneId: string): Promise<string | undefined> {
+  let stdout: string;
+  try {
+    ({ stdout } = await runHerdr(cfg, ["pane", "read", paneId, "--source", "visible", "--format", "text"]));
+  } catch {
+    return undefined;
+  }
+  return stdout.split("\n").map((line) => line.trim()).filter((line) => line !== "").at(-1);
+}
+
+/** Optional `(base) ` / `[env] ` prefixes, then one unbroken prompt token. */
+const PROMPT_HEAD = /^(?:[([][^)\]]*[)\]]\s*)*(\S*)\s*$/;
+/** `user@host:~/path`, `~/path`, `host`, or nothing at all. */
+const PROMPT_TOKEN = /^[\w.@~/+-]*(?::[\w.@~/+-]*)?$/;
+
+/**
+ * True when `line` is a shell sitting at its own prompt, waiting for a command.
+ *
+ * This is what a worker's pane looks like once its agent has exited, and Herdr
+ * can still report that pane as `blocked` — so helm uses it to tell an idle
+ * shell apart from an agent that is genuinely waiting on the human.
+ *
+ * Deliberately narrow, and a line this does NOT recognise keeps its blocker
+ * card: a missing blocker is a worse failure than a noisy one. It matches only
+ * what a shell writes for itself — an optional `(base) ` style prefix, one
+ * `user@host:cwd` token, and a bare sigil at the end with NOTHING typed after
+ * it. A live agent's prompt ("Press enter to continue", "1. Update now") has
+ * no trailing sigil and falls through, as does a prompt with a half-typed
+ * command still on it.
+ */
+export function isShellPromptLine(line: string): boolean {
+  const trimmed = line.trim();
+  // zsh-style prompts put the sigil FIRST. Only the glyphs no prose uses
+  // qualify — a leading ASCII `>` is a quote, a diff, or an agent's own marker.
+  const leading = /^[❯➜»]\s*/.exec(trimmed);
+  if (leading !== null) return PROMPT_TOKEN.test(trimmed.slice(leading[0].length));
+  if (!/[$%#>❯➜»]$/.test(trimmed)) return false;
+  const head = PROMPT_HEAD.exec(trimmed.slice(0, -1));
+  return head !== null && PROMPT_TOKEN.test(head[1] ?? "");
+}
+
 /** List panes, optionally within one workspace. */
 export async function paneList(cfg: HelmConfig, workspaceId?: string): Promise<HerdrPane[]> {
   const args = workspaceId === undefined

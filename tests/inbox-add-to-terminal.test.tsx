@@ -110,74 +110,101 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function attach(item: InboxItem): void {
+  fireEvent.click(
+    within(cardFor(item.title)).getByRole("button", {
+      name: `Add "${item.title}" to the terminal composer`,
+    }),
+  );
+}
+
+const CHIPS = "Cards attached to this message";
+
+/** Submit the composer and return the one line it sent to the pane. */
+async function send(): Promise<string> {
+  fireEvent.submit(composer().closest("form") as HTMLFormElement);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  const [url, init] = fetchMock.mock.calls.at(-1) as [string, RequestInit];
+  expect(url).toBe("/api/term/input");
+  return (JSON.parse(String(init.body)) as { text: string }).text;
+}
+
 describe("add to terminal", () => {
-  it("puts the card's full context into the composer", () => {
+  it("attaches the card as a chip and leaves the composer empty for the human", () => {
     showCard(askCard);
 
-    fireEvent.click(
-      within(cardFor(askCard.title)).getByRole("button", {
-        name: `Add "${askCard.title}" to the terminal composer`,
-      }),
-    );
+    attach(askCard);
 
-    const value = composer().value;
-    expect(value).toContain("Question from firstmate");
-    expect(value).toContain(`Title: ${askCard.title}`);
-    expect(value).toContain("Detail: Staging is three migrations behind production. I did not want to guess.");
-    expect(value).toContain("Options: Run it now | I was testing");
-    expect(value).toContain("Answer routes: relay into pane w1:p5");
-    expect(value).toContain(`Card: ${askCard.id}`);
+    // The card rides ABOVE the input, never inside it: 700 characters of
+    // machine text in a one-line field scrolls the human's words out of sight,
+    // and the composer stops reading as a composer.
+    expect(within(screen.getByRole("list", { name: CHIPS })).getByText(askCard.title)).toBeDefined();
+    expect(composer().value).toBe("");
   });
 
-  it("appends rather than overwriting what the human is already typing", () => {
-    showCard(askCard);
-    fireEvent.change(composer(), { target: { value: "hold off on this:" } });
-
-    fireEvent.click(
-      within(cardFor(askCard.title)).getByRole("button", {
-        name: `Add "${askCard.title}" to the terminal composer`,
-      }),
-    );
-
-    expect(composer().value.startsWith("hold off on this: [helm card —")).toBe(true);
-  });
-
-  it("leaves the caret after the block, ready for the next words", () => {
+  it("keeps the caret in the composer, so the next keystroke is the human's", () => {
     showCard(askCard);
 
-    fireEvent.click(
-      within(cardFor(askCard.title)).getByRole("button", {
-        name: `Add "${askCard.title}" to the terminal composer`,
-      }),
-    );
+    attach(askCard);
 
     const input = composer();
     expect(document.activeElement).toBe(input);
-    expect(input.selectionStart).toBe(input.value.length);
+    expect(input.selectionStart).toBe(0);
+
+    // The regression the captain reported: after attaching, typing landed in
+    // the box holding the context rather than in the terminal composer.
+    fireEvent.change(input, { target: { value: "please confirm" } });
+    expect(composer().value).toBe("please confirm");
   });
 
-  it("sends the composed line to the pane as one submission", async () => {
+  it("sends the card's full context and the human's message as one line", async () => {
     showCard(askCard);
-    fireEvent.click(
-      within(cardFor(askCard.title)).getByRole("button", {
-        name: `Add "${askCard.title}" to the terminal composer`,
-      }),
-    );
-    const input = composer();
-    fireEvent.change(input, { target: { value: `${input.value} please confirm` } });
-    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    attach(askCard);
+    fireEvent.change(composer(), { target: { value: "please confirm" } });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const [url, init] = fetchMock.mock.calls.at(-1) as [string, RequestInit];
-    expect(url).toBe("/api/term/input");
-    const body = JSON.parse(String(init.body)) as { text: string };
-    // One line: the pane input schema refuses anything else, and a newline
-    // would become a second submission.
-    expect(body.text).not.toMatch(/[\u0000-\u001f\u007f]/);
-    expect(body.text).toContain("please confirm");
+    const text = await send();
+
+    expect(text).toContain("Question from firstmate");
+    expect(text).toContain(`Title: ${askCard.title}`);
+    expect(text).toContain("Detail: Staging is three migrations behind production. I did not want to guess.");
+    expect(text).toContain("Options: Run it now | I was testing");
+    expect(text).toContain("Answer routes: relay into pane w1:p5");
+    expect(text).toContain(`Card: ${askCard.id}`);
+    // The human's words come last, and it is ONE line: the pane input schema
+    // refuses anything else, and a newline would become a second submission.
+    expect(text.endsWith("please confirm")).toBe(true);
+    expect(text).not.toMatch(/[\u0000-\u001f\u007f]/);
   });
 
-  it("offers the control on a read-only card too — attaching answers nothing", () => {
+  it("clears the chips once the line is away", async () => {
+    showCard(askCard);
+    attach(askCard);
+
+    await send();
+
+    await waitFor(() => expect(screen.queryByRole("list", { name: CHIPS })).toBeNull());
+  });
+
+  it("drops a chip the human removes, and puts the caret back", () => {
+    showCard(askCard);
+    attach(askCard);
+
+    fireEvent.click(screen.getByRole("button", { name: `Remove "${askCard.title}" from this message` }));
+
+    expect(screen.queryByRole("list", { name: CHIPS })).toBeNull();
+    expect(document.activeElement).toBe(composer());
+  });
+
+  it("attaches the same card once, however many times it is tapped", () => {
+    showCard(askCard);
+
+    attach(askCard);
+    attach(askCard);
+
+    expect(within(screen.getByRole("list", { name: CHIPS })).getAllByText(askCard.title)).toHaveLength(1);
+  });
+
+  it("offers the control on a read-only card too - attaching answers nothing", async () => {
     const answerCard: InboxItem = {
       ...askCard,
       id: inboxItemId("answers", "codex-auth"),
@@ -192,14 +219,10 @@ describe("add to terminal", () => {
     };
     showCard(answerCard);
 
-    fireEvent.click(
-      within(cardFor(answerCard.title)).getByRole("button", {
-        name: `Add "${answerCard.title}" to the terminal composer`,
-      }),
-    );
+    attach(answerCard);
 
-    expect(composer().value).toContain("Answer routes: read-only, no reply channel");
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(await send()).toContain("Answer routes: read-only, no reply channel");
   });
 });
 

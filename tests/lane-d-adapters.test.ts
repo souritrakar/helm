@@ -393,4 +393,79 @@ describe("agent-state adapter", () => {
     }));
     expect(requests.length).toBeLessThan(6);
   });
+
+  /**
+   * A herdr stub answering the two seams the blocked-agent card reads.
+   *
+   * `agent list` returns its JSON envelope; `pane read --format text` writes
+   * the pane's own screen to stdout with NO envelope, which is the real
+   * contract — there is no `--json` for it.
+   */
+  function blockedPaneHerdr(name: string, agent: string, terminalTitle: string, visible: string): string {
+    const path = join(root, name);
+    const agents = JSON.stringify({ id: "1", result: { type: "agent_list", agents: [
+      { pane_id: "w1:p1", workspace_id: "w1", tab_id: "t1", terminal_id: "term-1", agent, agent_status: "blocked", focused: false, terminal_title: terminalTitle },
+    ] } });
+    writeFileSync(path, `#!/bin/sh\nif [ "$1" = pane ] && [ "$2" = read ]; then\n  cat <<'READ'\n${visible}\nREAD\nelse\n  cat <<'AGENTS'\n${agents}\nAGENTS\nfi\n`);
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  async function startAgainst(herdr: string): Promise<void> {
+    config = { ...config, herdrBin: herdr };
+    server = createServer((socket) => {
+      connections.add(socket);
+      socket.once("data", () => socket.write('{"result":{"type":"subscription_started"}}\n'));
+    });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    await start(herdrAdapter("agent-state"));
+  }
+
+  // The captain's report: a torn-down worker's pane keeps Herdr's `blocked`
+  // status, and its leftover shell surfaced as a BLOCKER card in the inbox.
+  it("raises no blocker for a pane left sitting at a bare shell prompt", async () => {
+    await startAgainst(blockedPaneHerdr(
+      "herdr-idle-shell",
+      "codex",
+      "s7kar@s7kar-ThinkPad-P16v-Gen-2: ~/firstmate",
+      "worker done\n(base) s7kar@s7kar-ThinkPad-P16v-Gen-2:~/firstmate$\n",
+    ));
+
+    expect(emitted.at(-1)).toEqual([]);
+  });
+
+  // The other half of the same check: the shell-prompt TITLE is not evidence.
+  // A live codex waiting on its own prompt shows exactly that title, so
+  // filtering on it would drop a blocker the human genuinely needs.
+  it("still raises a blocker for a live agent whose title is the shell's", async () => {
+    await startAgainst(blockedPaneHerdr(
+      "herdr-live-prompt",
+      "codex",
+      "s7kar@s7kar-ThinkPad-P16v-Gen-2: ~/firstmate",
+      "  1. Update now\n  2. Skip\n\n  Press enter to continue\n",
+    ));
+
+    expect(emitted.at(-1)).toMatchObject([{
+      id: "agent-state:w1:p1",
+      kind: "blocker",
+      urgency: "blocking",
+      // Not `user@host: ~/path` — that names nothing the human can act on.
+      title: "codex is waiting for input in w1:p1",
+      // What the pane is actually waiting for, so the card is worth reading.
+      detail: "Press enter to continue",
+    }]);
+  });
+
+  it("keeps a title the AGENT wrote", async () => {
+    await startAgainst(blockedPaneHerdr(
+      "herdr-agent-title",
+      "claude",
+      "Fix helm inbox add-to-context and blocked agent bugs",
+      "Do you want to proceed?\n",
+    ));
+
+    expect(emitted.at(-1)).toMatchObject([
+      { title: "Fix helm inbox add-to-context and blocked agent bugs", detail: "Do you want to proceed?" },
+    ]);
+  });
 });

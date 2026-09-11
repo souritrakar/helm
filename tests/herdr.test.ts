@@ -15,6 +15,7 @@ import {
   herdrAgentSchema,
   herdrDoctor,
   herdrPaneSchema,
+  isShellPromptLine,
   parseHerdrEvent,
   observeTerminal,
   parseTerminalRecord,
@@ -530,5 +531,50 @@ describe("herdrDoctor", () => {
     expect(doctor.ok).toBe(false);
     expect(doctor.protocol).toBeNull();
     expect(doctor.problems).toHaveLength(2);
+  });
+});
+
+/**
+ * The line that tells an exited worker's shell apart from a blocked agent.
+ *
+ * Both are `blocked` to Herdr and both can show the same `user@host:cwd`
+ * terminal title, so this predicate is the whole discriminator behind the
+ * blocked-agent card. It is biased to say NO: an unrecognised line keeps its
+ * blocker, because a missing blocker is worse than a noisy one.
+ */
+describe("isShellPromptLine", () => {
+  it.each([
+    "(base) s7kar@s7kar-ThinkPad-P16v-Gen-2:~/firstmate$",
+    "s7kar@host:~/firstmate$",
+    "[s7kar@host work]$",
+    "user@host:/var/log#",
+    "~/firstmate %",
+    "$",
+    "%",
+    "#",
+    "❯",
+    "➜  ~",
+  ])("recognises the shell's own prompt: %j", (line) => {
+    expect(isShellPromptLine(line)).toBe(true);
+  });
+
+  it.each([
+    // The live codex that WAS reported as an idle shell. It is genuinely
+    // blocked, and filtering it out would hide a real blocker.
+    "Press enter to continue",
+    "  1. Update now (runs `npm install -g @openai/codex`)",
+    "Do you want to proceed? > yes",
+    "Approve this plan? [y/N]",
+    "# Running tests",
+    "> continue",
+    "error: cannot read /tmp/x",
+    "",
+    "   ",
+  ])("leaves everything else alone: %j", (line) => {
+    expect(isShellPromptLine(line)).toBe(false);
+  });
+
+  it("keeps a prompt with a half-typed command, which is not an idle pane", () => {
+    expect(isShellPromptLine("s7kar@host:~/firstmate$ git stat")).toBe(false);
   });
 });
