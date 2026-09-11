@@ -76,8 +76,10 @@ history (including each card's captured body) and the response audit live
 under `HELM_STATE_DIR`, never under `$FM_HOME`. The Fleet panel summarizes
 cached task health and flags work that needs you.
 
-Notifications announce blocking items. They never answer or mutate. Browser OS
-notifications fire only while the tab is hidden.
+Notifications announce blocking items. Their titles identify the card's kind
+before its summary, so the notification itself says what needs attention. They
+never answer or mutate. Browser OS notifications fire only while the tab is
+hidden.
 
 ## Requirements
 
