@@ -303,7 +303,7 @@ export function TerminalPane() {
    */
   const onComposerKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
     const key = KEY_SHORTCUTS[event.key];
-    if (key === undefined || event.currentTarget.value !== "") return;
+    if (key === undefined || line !== "") return;
     event.preventDefault();
     void post({ key });
   };

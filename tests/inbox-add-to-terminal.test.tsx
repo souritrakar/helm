@@ -157,6 +157,24 @@ describe("add to terminal", () => {
     expect(composer().value).toBe("please confirm");
   });
 
+  it("does not forward a shortcut while a card is attached", () => {
+    showCard(askCard);
+    attach(askCard);
+
+    fireEvent.keyDown(composer(), { key: "Escape" });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards a shortcut when the composer has no pending line", async () => {
+    fireEvent.keyDown(composer(), { key: "Escape" });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/term/input",
+      expect.objectContaining({ body: JSON.stringify({ paneId: "w1:p5", key: "escape" }) }),
+    ));
+  });
+
   it("sends the card's full context and the human's message as one line", async () => {
     showCard(askCard);
     attach(askCard);

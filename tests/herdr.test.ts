@@ -570,6 +570,7 @@ describe("isShellPromptLine", () => {
     "> continue",
     ">",
     "> ",
+    "Continue>",
     "error: cannot read /tmp/x",
     "",
     "   ",

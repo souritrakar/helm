@@ -39,9 +39,9 @@ function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
       };
       const agents = await agentList(config);
       const panes = new Set(agents.map((agent) => agent.pane_id));
-      for (const agent of agents.filter((candidate) => candidate.agent_status === "blocked")) {
-        await setBlocked(blocked, agent.pane_id, agent.agent, agent.terminal_title);
-      }
+      await Promise.all(agents
+        .filter((candidate) => candidate.agent_status === "blocked")
+        .map((agent) => setBlocked(blocked, agent.pane_id, agent.agent, agent.terminal_title)));
       ctx.emit([...blocked.values()]);
       const unsubscribeRelayTarget = deps.onRelayTargetChanged?.(() => ctx.emit(refreshRelay(blocked, deps))) ?? (() => undefined);
       let stopped = false;
@@ -117,8 +117,10 @@ function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
         for (const agent of liveAgents) {
           if (tombstoned.has(agent.pane_id)) continue;
           panes.add(agent.pane_id);
-          if (agent.agent_status === "blocked") await setBlocked(blocked, agent.pane_id, agent.agent, agent.terminal_title);
         }
+        await Promise.all(liveAgents
+          .filter((agent) => !tombstoned.has(agent.pane_id) && agent.agent_status === "blocked")
+          .map((agent) => setBlocked(blocked, agent.pane_id, agent.agent, agent.terminal_title)));
         ctx.emit([...blocked.values()]);
       };
       const forgetMissingPane = (cause: unknown): boolean => {

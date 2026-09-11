@@ -388,7 +388,7 @@ export function isShellPromptLine(line: string): boolean {
   const promptToken = head?.[1] ?? "";
   return head !== null
     && PROMPT_TOKEN.test(promptToken)
-    && (trimmed.at(-1) !== ">" || promptToken !== "");
+    && (trimmed.at(-1) !== ">" || /[@~/]/.test(promptToken));
 }
 
 /** List panes, optionally within one workspace. */
