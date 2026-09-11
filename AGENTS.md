@@ -39,6 +39,12 @@ These are not style preferences. Each one protects something that fails silently
    supersedes the earlier "take the selector from `actions.steer`" note.)
 6. **No Herdr lifecycle control.** helm observes, sends text, and reads. It never starts, stops,
    restarts, or deletes a session, workspace, or pane.
+7. **Never verify relay against a live agent pane.** A relay round-trip types a real line into a
+   real session, so a test answer is indistinguishable from a captain instruction to the agent
+   reading it. Point `HELM_CAPTAIN_PANE` at a disposable or nonexistent pane, or assert on the
+   audited argv in `actions.jsonl` — `herdr pane list` tells you which pane id is firstmate's
+   before you choose one. (Captain instruction, 2026-09-11, after a verification line landed in
+   the live firstmate pane.)
 
 ### The cockpit surface — three traps that fail silently
 
