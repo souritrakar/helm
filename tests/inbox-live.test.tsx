@@ -66,7 +66,7 @@ describe("live inbox shell", () => {
     expect(screen.queryByText("fixture")).toBeNull();
     expect(screen.getByRole("heading", { name: card.title })).toBeDefined();
     // The card lands on the Open tab, which counts it.
-    expect(screen.getByRole("button", { name: /^Open\s*1$/ })).toBeDefined();
+    expect(screen.getByRole("tab", { name: /^Open\s*1$/, selected: true })).toBeDefined();
   });
 
   it("POSTs a typed keyed answer to the respond endpoint (AC 8)", async () => {
@@ -207,7 +207,59 @@ describe("live inbox shell", () => {
     });
 
     expect(screen.queryByRole("heading", { name: open.title })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /^Answered/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Answered/ }));
     expect(screen.getByRole("heading", { name: "Already answered" })).toBeDefined();
+  });
+
+  it("shows one card for a decision that two seams both report (dedupe)", () => {
+    const stream = openStream();
+    const hold = baseItem({
+      id: inboxItemId("captain-holds", "backpass-session"),
+      source: "captain-holds",
+      kind: "captain-held",
+      taskId: "backpass-session",
+      title: "Run a backpass pass on the firstmate repo",
+      respond: { channel: "relay", target: "w1:p1" },
+    });
+    const projection = baseItem({
+      id: inboxItemId("bearings", "decision:backpass-session:backpass-session"),
+      source: "bearings",
+      kind: "decision",
+      urgency: "attention",
+      taskId: "backpass-session",
+      title: "Run a backpass pass on the firstmate repo: captain will trigger it later",
+      allowFreeform: false,
+      respond: { channel: "none" },
+    });
+    act(() => {
+      stream.emit("snapshot.begin", { ids: [hold.id, projection.id] });
+      stream.emit("item.upsert", hold);
+      stream.emit("item.upsert", projection);
+      stream.emit("snapshot.end", { count: 2 });
+    });
+
+    expect(screen.getByRole("heading", { name: hold.title })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: projection.title })).toBeNull();
+    expect(screen.queryByText("No reply channel")).toBeNull();
+    expect(screen.getByRole("tab", { name: /^Open\s*1$/ })).toBeDefined();
+  });
+
+  it("wires the state tabs as a real tablist, with arrow keys and one panel", () => {
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((entry) => entry.textContent)).toEqual(["Open", "Answered", "Dismissed"]);
+
+    const panel = screen.getByRole("tabpanel");
+    const open = screen.getByRole("tab", { name: /^Open/ });
+    expect(panel.getAttribute("aria-labelledby")).toBe(open.id);
+    for (const entry of tabs) expect(entry.getAttribute("aria-controls")).toBe(panel.id);
+    // Roving tabindex: the tab strip is one Tab stop, not three.
+    expect(tabs.map((entry) => entry.tabIndex)).toEqual([0, -1, -1]);
+
+    fireEvent.keyDown(open, { key: "ArrowRight" });
+
+    expect(screen.getByRole("tab", { selected: true }).textContent).toBe("Answered");
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+      screen.getByRole("tab", { name: /^Answered/ }).id,
+    );
   });
 });

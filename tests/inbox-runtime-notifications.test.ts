@@ -58,7 +58,7 @@ describe("native inbox notifications", () => {
     runtime.store.reconcile("fake", [item("second blocking phase")]);
 
     expect(notify).toHaveBeenCalledTimes(2);
-    expect(notify).toHaveBeenLastCalledWith({ ...CONFIG, helmStateDir: stateDir }, "second blocking phase", "second blocking phase");
+    expect(notify).toHaveBeenLastCalledWith({ ...CONFIG, helmStateDir: stateDir }, "Blocker — second blocking phase", "second blocking phase");
   });
 
   it("suppresses a visible occurrence through updates until it is re-raised", () => {
@@ -77,6 +77,19 @@ describe("native inbox notifications", () => {
     runtime.store.reconcile("fake", [item("re-raised")]);
 
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenLastCalledWith({ ...CONFIG, helmStateDir: stateDir }, "re-raised", "re-raised");
+    expect(notify).toHaveBeenLastCalledWith({ ...CONFIG, helmStateDir: stateDir }, "Blocker — re-raised", "re-raised");
+  });
+
+  it("leads the nudge title with the primitive type, so the kind reads from the notification alone", () => {
+    stateDir = mkdtempSync(join(tmpdir(), "helm-runtime-"));
+    const runtime = createInboxRuntime({ ...CONFIG, helmStateDir: stateDir }, { relayTarget: () => undefined });
+
+    runtime.store.reconcile("fake", [{ ...item("Fund a Perplexity key"), kind: "captain-held", detail: "Option A or B" }]);
+
+    expect(notify).toHaveBeenLastCalledWith(
+      { ...CONFIG, helmStateDir: stateDir },
+      "Captain hold — Fund a Perplexity key",
+      "Option A or B",
+    );
   });
 });

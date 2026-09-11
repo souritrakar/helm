@@ -77,7 +77,7 @@ function cardFor(title: string): HTMLElement {
 
 /** Switch the inbox to one state tab. Each tab shows only that state. */
 function showTab(label: "Open" | "Answered" | "Dismissed"): void {
-  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}`) }));
+  fireEvent.click(screen.getByRole("tab", { name: new RegExp(`^${label}`) }));
 }
 
 async function renderLiveInbox(): Promise<FakeEventSource> {

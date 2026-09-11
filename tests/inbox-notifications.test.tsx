@@ -78,8 +78,11 @@ afterEach(() => {
   Reflect.deleteProperty(navigator, "serviceWorker");
 });
 
+/** The announced title leads with the kind, so this is what the bridge shows. */
+const ANNOUNCED = "Decision needed — Captain action needed";
+
 function blocking(id: string) {
-  return { id, urgency: "blocking", state: "open", title: "Captain action needed", detail: "A task is blocked." };
+  return { id, kind: "status-decision", urgency: "blocking", state: "open", title: "Captain action needed", detail: "A task is blocked." };
 }
 
 describe("inbox notification stream", () => {
@@ -95,7 +98,7 @@ describe("inbox notification stream", () => {
     });
 
     await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
-    expect(showNotification).toHaveBeenCalledWith("Captain action needed", expect.objectContaining({ tag: "status:second" }));
+    expect(showNotification).toHaveBeenCalledWith(ANNOUNCED, expect.objectContaining({ tag: "status:second" }));
     expect(screen.getByRole("status").textContent).toBe("1");
   });
 
@@ -156,7 +159,7 @@ describe("inbox notification stream", () => {
     });
 
     await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
-    expect(showNotification).toHaveBeenCalledWith("Captain action needed", expect.objectContaining({ tag: "status:escalation" }));
+    expect(showNotification).toHaveBeenCalledWith(ANNOUNCED, expect.objectContaining({ tag: "status:escalation" }));
   });
 
   it("announces a re-raised card after a cold snapshot omits its earlier occurrence", async () => {
@@ -177,7 +180,7 @@ describe("inbox notification stream", () => {
     });
 
     await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(2));
-    expect(showNotification).toHaveBeenLastCalledWith("Captain action needed", expect.objectContaining({ tag: "status:reraised" }));
+    expect(showNotification).toHaveBeenLastCalledWith(ANNOUNCED, expect.objectContaining({ tag: "status:reraised" }));
     expect(screen.getByRole("status").textContent).toBe("1");
   });
 
@@ -370,7 +373,7 @@ describe("inbox notification stream", () => {
     });
 
     await vi.waitFor(() => expect(showNotification).toHaveBeenCalledTimes(1));
-    expect(showNotification).toHaveBeenCalledWith("Replacement action needed", expect.objectContaining({ tag: "status:reraised-pending" }));
+    expect(showNotification).toHaveBeenCalledWith("Decision needed — Replacement action needed", expect.objectContaining({ tag: "status:reraised-pending" }));
   });
 
   it("invalidates pending notification delivery at snapshot start", async () => {

@@ -67,7 +67,10 @@ count is tens rather than thousands, no row span carries a `letter-spacing` **ab
 magnitude**, console empty. The threshold matters: a healthy mirror carries a sub-pixel
 `letter-spacing` (measured at `-0.0125px` on every row) as xterm's ordinary cell-rounding
 compensation. Only a value large enough to see is the font-measurement mismatch trap — reading
-"any letter-spacing at all" as the failure sends a future agent to fix a working pane.
+"any letter-spacing at all" as the failure sends a future agent to fix a working pane. Judge the
+POPULATION, not the maximum: a single box-drawing glyph the mono face lacks (`⎿`) falls back and
+picks up a visible compensation of its own, so one outlier among hundreds of healthy rows is a
+missing glyph, not the trap.
 
 ### Shape decisions worth knowing
 
@@ -76,7 +79,20 @@ compensation. Only a value large enough to see is the font-measurement mismatch 
   counts, the sort, the section headers, the card chip, and the context block cannot disagree.
   Buckets are the four things helm exists to surface (decisions, questions, approvals, answers)
   plus info. The open tab is banded by urgency (`sectionsForTab`); handled tabs are not, because
-  a "Blocking" header over a closed card claims something untrue.
+  a "Blocking" header over a closed card claims something untrue. It also owns two rules that
+  exist because the same fact reaches helm twice or with no context around it:
+  - **One decision, one card.** `fm-bearings-snapshot.sh` re-projects every `captain_actionable`
+    backlog record into `decisions_open`, so the captain-holds adapter and the bearings adapter
+    both raise the SAME decision — once answerable, once as a dead "No reply channel" card.
+    `itemsForTab` drops the unanswerable twin. Do not instead delete the bearings projection: its
+    second half carries SECONDMATE holds (`id` is `<secondmate>/<sub>`) that no other adapter
+    reads. The predicate is deliberately narrow — decisions bucket only, and only when another
+    card for the same `taskId` has a real channel — so a gate keeps its own body and a lone
+    unanswerable decision is never hidden.
+  - **An announcement leads with the kind.** A toast, a browser notification, and the Herdr nudge
+    arrive with no chip and no card around them, so `notificationTitle` prefixes the `KIND_LABELS`
+    word. The browser bridge needs `kind` on the SSE wire; an unrecognised kind degrades to the
+    bare title rather than dropping a blocking announcement.
 - **Ask cards and terminal context** are documented in
   [`docs/architecture.md`](docs/architecture.md#two-halves-of-the-same-conversation) and
   [`docs/architecture.md`](docs/architecture.md#add-to-terminal); keep their source contracts,

@@ -77,6 +77,57 @@ export function bucketOf(item: InboxItem): InboxBucket {
   return BUCKET_BY_KIND[item.kind];
 }
 
+/**
+ * The line a notification leads with: what the card IS, then what it says.
+ *
+ * A notification arrives with no chip, no bucket header, and no card around it,
+ * so a bare summary makes the human open helm just to learn whether it is a
+ * decision or a note. Leading with the same {@link KIND_LABELS} word the chip
+ * carries answers "do I need to act" from the notification alone, and keeps the
+ * toast, the browser notification, and the Herdr nudge saying one thing.
+ *
+ * `kind` is widened to `string` because the browser bridge reads it off the SSE
+ * wire. An unrecognised kind falls back to the bare title: a notification that
+ * loses its prefix is a visible cosmetic loss, while dropping the prefix source
+ * on the floor would be silent, and a blocking card must still announce.
+ */
+export function notificationTitle(kind: string, title: string): string {
+  const label = KIND_LABELS[kind as InboxItemKind] as string | undefined;
+  return label === undefined ? title : `${label} — ${title}`;
+}
+
+/**
+ * Drop a decision card that another card already carries answerably.
+ *
+ * Two firstmate seams describe one captain decision: the bearings projection
+ * lists it, and the backlog or status fold raises the card that can answer it.
+ * They reach the store under different ids, so the human sees the same decision
+ * twice — once actionable, once as a dead "No reply channel" card that offers
+ * nothing the live one does not.
+ *
+ * Deliberately narrow. Only a card in the DECISIONS bucket that can carry no
+ * answer is a candidate, and only when another card for the same task CAN carry
+ * one. A lone unanswerable decision survives, because dropping it would hide the
+ * decision entirely; a gate or approval is never touched, because its body is
+ * its own information rather than a restatement.
+ */
+function withoutDuplicateDecisions(items: readonly InboxItem[]): readonly InboxItem[] {
+  const answerableTasks = new Set(
+    items
+      .filter((item) => item.respond.channel !== "none")
+      .map((item) => item.taskId)
+      .filter((taskId): taskId is string => taskId !== undefined),
+  );
+  if (answerableTasks.size === 0) return items;
+  return items.filter(
+    (item) =>
+      item.respond.channel !== "none" ||
+      bucketOf(item) !== "decisions" ||
+      item.taskId === undefined ||
+      !answerableTasks.has(item.taskId),
+  );
+}
+
 /** Primary sort: how much the item wants the human. */
 const URGENCY_RANK: Record<InboxUrgency, number> = { blocking: 0, attention: 1, fyi: 2 };
 
@@ -111,9 +162,16 @@ export function sortForDisplay(items: readonly InboxItem[], tab: InboxTab): Inbo
   });
 }
 
-/** The cards belonging on `tab`, already ordered for display. */
+/**
+ * The cards belonging on `tab`, deduped and already ordered for display.
+ *
+ * Dedupe runs across every state, not just `tab`: the answerable twin may have
+ * already moved to Answered, and its dead projection must not reappear on Open
+ * as a decision the human seems to still owe.
+ */
 export function itemsForTab(items: readonly InboxItem[], tab: InboxTab): InboxItem[] {
-  return sortForDisplay(items.filter((item) => item.state === tab), tab);
+  const deduped = withoutDuplicateDecisions(items);
+  return sortForDisplay(deduped.filter((item) => item.state === tab), tab);
 }
 
 /**

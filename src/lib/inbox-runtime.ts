@@ -9,6 +9,7 @@ import { createInboxStore, type InboxStore } from "./inbox-store";
 import { createResponder, type Responder } from "./responder";
 import { registerProductionAdapters, type StateAdapterDeps } from "./adapters";
 import { showHerdrNotification } from "./herdr";
+import { notificationTitle } from "./inbox-view";
 import { InboxVisibility } from "./inbox-visibility";
 import type { InboxItem } from "./types";
 
@@ -59,7 +60,7 @@ export function createInboxRuntime(config: HelmConfig, deps: StateAdapterDeps): 
     if (visibility.itemIsVisible(item.id)) return;
     // A desktop-notification failure must never disrupt the read-only inbox
     // stream. `showHerdrNotification` is argv-only and resolves with its result.
-    void showHerdrNotification(config, item.title, item.detail ?? item.title);
+    void showHerdrNotification(config, notificationTitle(item.kind, item.title), item.detail ?? item.title);
   });
 
   return {
