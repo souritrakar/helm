@@ -143,6 +143,7 @@ function FleetRow({ member }: { member: FleetMember }) {
         )}
       </div>
       {member.doing !== undefined && (
+        /* The captain ratified this scan-surface clamp: row identity is fully readable; detail lives in the inbox and terminal. */
         <p className="mt-1 text-pretty break-words text-ui text-muted-foreground [-webkit-box-orient:vertical] [display:-webkit-box] [-webkit-line-clamp:2] overflow-hidden">
           {member.doing}
         </p>

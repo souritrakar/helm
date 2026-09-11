@@ -111,10 +111,27 @@ describe("the context block", () => {
     expect(inboxItemContext(readOnly)).toContain("Answer routes: read-only, no reply channel");
   });
 
-  it("reports what a handled card was answered with", () => {
-    const handled: InboxItem = { ...BASE, state: "answered", answer: "Run it now" };
+  it("reports what a handled card was answered with and when", () => {
+    const handled: InboxItem = {
+      ...BASE,
+      state: "answered",
+      answer: "Run it now",
+      answeredAt: "2026-09-10T21:05:00Z",
+      respond: { channel: "captain-hold", target: "run-migration", close: "release" },
+    };
 
-    expect(inboxItemContext(handled)).toContain("State: answered — Run it now");
+    const block = inboxItemContext(handled);
+
+    expect(block).toContain("State: answered — Run it now — handled at 2026-09-10T21:05:00Z");
+    expect(block).toContain("Declared close mode: release");
+  });
+
+  it("omits handled metadata without leaving a stray context segment on an open card", () => {
+    const block = inboxItemContext(BASE);
+
+    expect(block).not.toContain("State:");
+    expect(block).not.toContain("Declared close mode:");
+    expect(block).not.toContain(" ·  · ");
   });
 
   it("omits an absent optional field instead of printing an empty label", () => {

@@ -56,6 +56,12 @@ function evidenceContext(entry: InboxEvidence): string {
   return flattenField(entry.line === undefined ? entry.path : `${entry.path}:${entry.line}`);
 }
 
+function stateContext(item: InboxItem): string | undefined {
+  if (item.state === "open") return undefined;
+  const state = item.answer === undefined ? item.state : `${item.state} — ${item.answer}`;
+  return item.answeredAt === undefined ? state : `${state} — handled at ${item.answeredAt}`;
+}
+
 /**
  * The full context of one card, as one line.
  *
@@ -83,11 +89,12 @@ export function inboxItemContext(item: InboxItem): string {
     item.evidence.length > 0
       ? `Evidence: ${item.evidence.map(evidenceContext).join(", ")}`
       : null,
+    segment("Declared close mode", item.respond.close),
     segment("Answer routes", describeChannel(item)),
     segment("Source", item.source),
     segment("Card", item.id),
     segment("Opened", item.openedAt),
-    item.state === "open" ? null : segment("State", item.answer === undefined ? item.state : `${item.state} — ${item.answer}`),
+    segment("State", stateContext(item)),
   ].filter((value): value is string => value !== null);
 
   return `${head} ${segments.join(SEPARATOR)}`;
