@@ -140,6 +140,14 @@ export const fleetTaskSchema = z.object({
     pending_decision: z.boolean(),
     blocked_event: z.boolean(),
     open_decisions: z.array(snapshotOpenDecisionSchema),
+    /**
+     * The task's most recent status line, verbatim.
+     *
+     * This is the one field that answers "what is it doing right now" in the
+     * fleet view. Optional because firstmate omits it for a task with no
+     * status log yet.
+     */
+    last_event_text: z.string().nullish(),
   }),
   /**
    * The commands firstmate suggests for this task, as display and provenance

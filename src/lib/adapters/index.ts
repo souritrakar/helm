@@ -1,9 +1,22 @@
 import type { HelmConfig } from "../config";
 import type { AdapterRegistry } from "./registry";
+import { createAnswerAdapter } from "./answers";
 import { createHerdrAdapters } from "./herdr-events";
-import { createStateAdapters } from "./state";
+import { createStateAdapters, type StateAdapterDeps } from "./state";
 
-/** Register the eight read-only Lane D producers. */
-export function registerProductionAdapters(registry: AdapterRegistry, config: HelmConfig): void {
-  for (const adapter of [...createStateAdapters(config), ...createHerdrAdapters(config)]) registry.register(adapter);
+export type { StateAdapterDeps } from "./state";
+
+/** Register the nine read-only Lane D producers. */
+export function registerProductionAdapters(
+  registry: AdapterRegistry,
+  config: HelmConfig,
+  deps: StateAdapterDeps,
+): void {
+  for (const adapter of [
+    ...createStateAdapters(config, deps),
+    createAnswerAdapter(config),
+    ...createHerdrAdapters(config, deps),
+  ]) {
+    registry.register(adapter);
+  }
 }

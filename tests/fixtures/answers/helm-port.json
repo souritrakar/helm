@@ -1,0 +1,6 @@
+{
+  "id": "helm-port",
+  "question": "What port does helm listen on by default?",
+  "answer": "7333 on 127.0.0.1. Both are config (HELM_PORT / HELM_BIND), so moving helm to a cloud VM is a config swap rather than a code change.",
+  "ts": "2026-09-10T20:44:00Z"
+}

@@ -16,6 +16,7 @@ import {
 } from "./inbox-store";
 import { requireOperator } from "./require-operator";
 import type { Responder } from "./responder";
+import type { FleetOverview } from "./fleet-view";
 import type { InboxVisibility } from "./inbox-visibility";
 import type { InboxItem, RespondAction } from "./types";
 
@@ -25,9 +26,12 @@ export interface InboxHttpDeps {
   /** Host allowlist for requireOperator (bind + loopback). */
   readonly allowedHosts: readonly string[];
   readonly visibility?: InboxVisibility;
+  /** Fleet overview for `GET /api/fleet`. Omitted in focused tests. */
+  readonly fleet?: () => FleetOverview;
 }
 
 const RESPOND_PATH = /^\/api\/inbox\/([^/]+)\/respond\/?$/;
+const DISMISS_PATH = /^\/api\/inbox\/([^/]+)\/dismiss\/?$/;
 const VISIBILITY_PATH = "/api/inbox/visibility";
 
 /** Ids currently inside `responder.respond` — blocks double-dispatch races. */
@@ -64,23 +68,83 @@ export async function handleInboxHttp(
 
   const respondMatch = RESPOND_PATH.exec(pathname);
   if (respondMatch !== null && req.method === "POST") {
-    let id: string;
-    try {
-      id = decodeURIComponent(respondMatch[1] ?? "");
-    } catch {
-      json(res, 400, { ok: false, error: "inbox item id is not a valid URI component" });
-      return true;
-    }
+    const id = decodeId(res, respondMatch[1]);
+    if (id === null) return true;
     await handleRespond(req, res, deps, id);
     return true;
   }
 
+  const dismissMatch = DISMISS_PATH.exec(pathname);
+  if (dismissMatch !== null && req.method === "POST") {
+    const id = decodeId(res, dismissMatch[1]);
+    if (id === null) return true;
+    handleDismiss(req, res, deps, id);
+    return true;
+  }
+
   if (pathname === "/api/inbox" && req.method === "GET") {
-    json(res, 200, { items: deps.store.listOpen() });
+    json(res, 200, { items: deps.store.listOpen(), handled: deps.store.listHandled() });
+    return true;
+  }
+
+  if (pathname === "/api/fleet" && req.method === "GET" && deps.fleet !== undefined) {
+    // Served from the pane directory's cached snapshot: `fm-fleet-snapshot.sh`
+    // budgets up to 180s, so running it per poll would stall the view.
+    json(res, 200, deps.fleet());
     return true;
   }
 
   return false;
+}
+
+/** Decode one path segment as an item id, answering 400 when it is not one. */
+function decodeId(res: ServerResponse, raw: string | undefined): string | null {
+  try {
+    return decodeURIComponent(raw ?? "");
+  } catch {
+    json(res, 400, { ok: false, error: "inbox item id is not a valid URI component" });
+    return null;
+  }
+}
+
+/**
+ * Dismiss a card without answering it.
+ *
+ * Local to helm: it marks the card handled in helm's own state dir and calls no
+ * firstmate seam, so nothing is closed, answered, or recorded upstream. The
+ * adapter's per-occurrence natural key means a recurring condition raises a new
+ * card rather than staying suppressed forever.
+ */
+function handleDismiss(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: InboxHttpDeps,
+  id: string,
+): void {
+  const gate = requireOperator(req, { mutate: true, allowedHosts: deps.allowedHosts });
+  if (!gate.allow) {
+    json(res, 403, { ok: false, error: gate.reason });
+    return;
+  }
+  const item = deps.store.get(id);
+  if (item === undefined || item.state !== "open") {
+    if (deps.store.isHandled(id)) {
+      json(res, 409, { ok: false, error: `item ${id} was already answered or dismissed` });
+      return;
+    }
+    json(res, 404, { ok: false, error: `item ${id} is not open` });
+    return;
+  }
+  try {
+    deps.store.markDismissed(id);
+  } catch (cause) {
+    if (cause instanceof HistoryPersistError) {
+      json(res, 500, { ok: false, error: cause.message });
+      return;
+    }
+    throw cause;
+  }
+  json(res, 200, { ok: true });
 }
 
 async function handleVisibility(
@@ -225,7 +289,9 @@ async function handleRespond(
     const result = await deps.responder.respond(item, action);
     if (result.ok) {
       try {
-        deps.store.markAnswered(id);
+        // Record the answer the operator chose so the handled card can show
+        // WHAT was decided, not merely that it closed.
+        deps.store.markAnswered(id, undefined, action.value ?? action.text);
       } catch (cause) {
         if (cause instanceof HistoryPersistError) {
           json(res, 500, {

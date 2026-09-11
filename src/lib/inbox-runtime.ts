@@ -7,7 +7,7 @@ import { createFileAuditWriter } from "./audit";
 import { createAdapterRegistry, type AdapterRegistry } from "./adapters/registry";
 import { createInboxStore, type InboxStore } from "./inbox-store";
 import { createResponder, type Responder } from "./responder";
-import { registerProductionAdapters } from "./adapters";
+import { registerProductionAdapters, type StateAdapterDeps } from "./adapters";
 import { showHerdrNotification } from "./herdr";
 import { InboxVisibility } from "./inbox-visibility";
 import type { InboxItem } from "./types";
@@ -26,13 +26,16 @@ export interface InboxRuntime {
  *
  * Production source adapters are registered before `start()`; tests may build
  * a separate registry with only the adapters they need.
+ *
+ * `deps.relayTarget` is called on every adapter tick rather than read once, so
+ * relay cards pick up the firstmate pane as soon as Herdr discovery finds it.
  */
-export function createInboxRuntime(config: HelmConfig): InboxRuntime {
+export function createInboxRuntime(config: HelmConfig, deps: StateAdapterDeps): InboxRuntime {
   const store = createInboxStore(config.helmStateDir);
   const audit = createFileAuditWriter(config.helmStateDir);
   const responder = createResponder({ config, audit });
   const registry = createAdapterRegistry();
-  registerProductionAdapters(registry, config);
+  registerProductionAdapters(registry, config, deps);
   const visibility = new InboxVisibility();
   // One Herdr nudge per blocking occurrence. Retract and a non-blocking upsert
   // clear the id so a later raise or escalation can announce again. Browser-side

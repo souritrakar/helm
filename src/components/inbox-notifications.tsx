@@ -1,6 +1,15 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { toast } from "sonner";
 
 type NotificationPermissionState = NotificationPermission | "unsupported";
@@ -30,6 +39,30 @@ const InboxNotificationContext = createContext<NotificationContextValue>(noNotif
 
 function browserPermission(): NotificationPermissionState {
   return typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+}
+
+/**
+ * `Notification.permission` read as an external store.
+ *
+ * It must NOT be read during render: the server would say "unsupported" and the
+ * first client render "default", failing hydration and forcing React to rebuild
+ * the tree — which would tear down the terminal and its WebSocket. A server
+ * snapshot of "unsupported" makes both sides agree, and the real value arrives
+ * on the first post-hydration read.
+ */
+const permissionListeners = new Set<() => void>();
+
+function subscribePermission(onChange: () => void): () => void {
+  permissionListeners.add(onChange);
+  return () => permissionListeners.delete(onChange);
+}
+
+function permissionChanged(): void {
+  for (const listener of permissionListeners) listener();
+}
+
+function serverPermission(): NotificationPermissionState {
+  return "unsupported";
 }
 
 function itemIsVisible(id: string): boolean {
@@ -95,7 +128,7 @@ function parseInboxEventItem(raw: string): InboxEventItem | null {
  */
 export function InboxNotificationProvider({ children }: { children: React.ReactNode }) {
   const [unreadBlocking, setUnreadBlocking] = useState(0);
-  const [permission, setPermission] = useState<NotificationPermissionState>(browserPermission);
+  const permission = useSyncExternalStore(subscribePermission, browserPermission, serverPermission);
   const serviceWorkerReady = useRef<Promise<ServiceWorkerRegistration | null>>(Promise.resolve(null));
   const blockingStates = useRef(new Map<string, BlockingNotificationState>());
   const notificationGeneration = useRef(0);
@@ -319,7 +352,8 @@ export function InboxNotificationProvider({ children }: { children: React.ReactN
 
   const requestPermission = useCallback(async () => {
     if (typeof Notification === "undefined" || Notification.permission !== "default") return;
-    setPermission(await Notification.requestPermission());
+    await Notification.requestPermission();
+    permissionChanged();
   }, []);
 
   const value = useMemo(() => ({ unreadBlocking, permission, requestPermission }), [unreadBlocking, permission, requestPermission]);

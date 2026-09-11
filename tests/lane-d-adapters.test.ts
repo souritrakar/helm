@@ -8,9 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHerdrAdapters } from "@/lib/adapters/herdr-events";
 import { registerProductionAdapters } from "@/lib/adapters";
 import { createAdapterRegistry } from "@/lib/adapters/registry";
-import { createStateAdapters } from "@/lib/adapters/state";
+import { createStateAdapters, type StateAdapterDeps } from "@/lib/adapters/state";
 import { DEFAULT_BIND, DEFAULT_PORT, type HelmConfig } from "@/lib/config";
+import { createInboxStore } from "@/lib/inbox-store";
 import type { InboxItem } from "@/lib/types";
+
+/** The firstmate pane discovery would resolve, so relay cards are answerable. */
+const RELAY_PANE = "w1:p1";
 
 let root = "";
 let config: HelmConfig;
@@ -31,14 +35,15 @@ afterEach(() => { for (const disposer of disposers) disposer[Symbol.dispose](); 
 async function start(adapter: ReturnType<typeof createStateAdapters>[number] | ReturnType<typeof createHerdrAdapters>[number]): Promise<void> {
   disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
 }
-function stateAdapter(id: string) { return createStateAdapters(config).find((adapter) => adapter.id === id)!; }
+function stateAdapter(id: string) { return createStateAdapters(config, { relayTarget: () => RELAY_PANE }).find((adapter) => adapter.id === id)!; }
+function herdrAdapter(id: string, deps: StateAdapterDeps = { relayTarget: () => RELAY_PANE }) { return createHerdrAdapters(config, deps).find((adapter) => adapter.id === id)!; }
 
 describe("state record adapters", () => {
-  it("registers all eight production sources exactly once", () => {
+  it("registers all nine production sources exactly once", () => {
     const registry = createAdapterRegistry();
-    registerProductionAdapters(registry, config);
+    registerProductionAdapters(registry, config, { relayTarget: () => RELAY_PANE });
     expect(registry.list().map((adapter) => adapter.id)).toEqual([
-      "status-decisions", "captain-holds", "bearings", "captain-notes", "steering-backlog", "procevent", "agent-state", "output-match",
+      "status-decisions", "captain-holds", "bearings", "captain-notes", "steering-backlog", "procevent", "answers", "agent-state", "output-match",
     ]);
   });
 
@@ -46,7 +51,7 @@ describe("state record adapters", () => {
     const inbox = join(config.fmStateDir, "inbox"); mkdirSync(inbox);
     const note = join(inbox, "n-1.note"); writeFileSync(note, "id=n-1\nat=2026-09-07T00:00:00Z\n--\n<em>untrusted</em> ; $(nope)");
     await start(stateAdapter("captain-notes"));
-    expect(emitted.at(-1)).toMatchObject([{ id: "captain-notes:n-1", detail: expect.stringContaining("$(nope)"), respond: { channel: "none" }, evidence: [{ path: note }] }]);
+    expect(emitted.at(-1)).toMatchObject([{ id: "captain-notes:n-1", detail: expect.stringContaining("$(nope)"), respond: { channel: "relay", target: RELAY_PANE }, evidence: [{ path: note }] }]);
     expect(() => stat(note)).not.toThrow();
   });
 
@@ -73,11 +78,11 @@ describe("state record adapters", () => {
     const script = join(config.fmBinDir, "fm-fleet-snapshot.sh");
     writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' '{\"schema\":\"fm-fleet-snapshot.v1\",\"generated\":\"2026-09-07T00:00:00Z\",\"fm_home\":\"fixture\",\"roots\":{\"fm_root\":\"/fixture\",\"state\":\"/fixture/state\",\"data\":\"/fixture/data\",\"config\":\"/fixture/config\",\"projects\":\"/fixture/projects\"},\"backlog\":{\"path\":\"/fixture/backlog\",\"present\":true,\"records\":[{\"order\":1,\"state\":\"held\",\"raw\":\"inert\",\"structured\":true,\"id\":\"held-1\",\"title\":\"Approve release\",\"repo\":null,\"kind\":null,\"hold_kind\":null,\"hold_reason\":\"Awaiting captain\",\"hold_until\":null,\"blocked_by_ids\":[],\"unresolved_blocker_ids\":[],\"current_role\":null,\"captain_actionable\":true,\"deferred_marker\":false,\"pr_url\":null}]},\"tasks\":[],\"main_inventory\":{\"valid\":true,\"reason\":null,\"orphan_in_flight\":[],\"unstructured_current_count\":0}}'\n");
     chmodSync(script, 0o755);
-    config = { ...config, captainPane: "w1:captain" };
     await start(stateAdapter("captain-holds"));
     expect(emitted.at(-1)).toMatchObject([{
       id: "captain-holds:held-1", kind: "captain-held", urgency: "blocking", taskId: "held-1",
-      title: "Approve release", detail: "Awaiting captain", respond: { channel: "relay", target: "w1:captain" },
+      title: "Approve release", detail: "Awaiting captain", respond: { channel: "relay", target: RELAY_PANE },
+      options: [{ value: "approve" }, { value: "deny" }], allowFreeform: true,
     }]);
   });
 
@@ -91,13 +96,25 @@ describe("state record adapters", () => {
     expect(() => stat(`${result.slice(0, -7)}.handled`)).toThrow();
   });
 
-  it("relays sensitive bearings gates to the configured firstmate pane", async () => {
+  it("relays sensitive bearings gates to the resolved firstmate pane as an approval", async () => {
     const script = join(config.fmBinDir, "fm-bearings-snapshot.sh");
     writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' '{\"schema\":\"fm-bearings.v1\",\"home\":\"fixture\",\"generated\":\"2026-09-07T00:00:00Z\",\"in_flight\":[],\"decisions_open\":[],\"gates\":[{\"id\":\"deploy\",\"title\":\"Merge deploy\",\"blocked_by\":\"main\",\"reason\":\"merge approval required\",\"owner\":\"captain\"}],\"landed\":[],\"reports\":[],\"omitted\":[]}'\n");
     chmodSync(script, 0o755);
-    config = { ...config, captainPane: "w1:captain" };
     await start(stateAdapter("bearings"));
-    expect(emitted.at(-1)).toMatchObject([{ kind: "merge", respond: { channel: "relay", target: "w1:captain" } }]);
+    expect(emitted.at(-1)).toMatchObject([{
+      kind: "merge", respond: { channel: "relay", target: RELAY_PANE },
+      options: [{ value: "approve" }, { value: "deny" }],
+    }]);
+  });
+
+  it("leaves a relay card unanswerable when no firstmate pane is reachable", async () => {
+    const script = join(config.fmBinDir, "fm-bearings-snapshot.sh");
+    writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' '{\"schema\":\"fm-bearings.v1\",\"home\":\"fixture\",\"generated\":\"2026-09-07T00:00:00Z\",\"in_flight\":[],\"decisions_open\":[],\"gates\":[{\"id\":\"deploy\",\"title\":\"Merge deploy\",\"blocked_by\":\"main\",\"reason\":\"merge approval required\",\"owner\":\"captain\"}],\"landed\":[],\"reports\":[],\"omitted\":[]}'\n");
+    chmodSync(script, 0o755);
+    const adapter = createStateAdapters(config, { relayTarget: () => undefined }).find((entry) => entry.id === "bearings")!;
+    await start(adapter);
+    // Better an honest read-only card than a control whose answer goes nowhere.
+    expect(emitted.at(-1)).toMatchObject([{ kind: "merge", respond: { channel: "none" } }]);
   });
 });
 
@@ -116,12 +133,41 @@ describe("output-match adapter", () => {
       socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
     }); });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    config = { ...config, captainPane: "w1:captain", outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Deploy failed" }] };
-    const adapter = createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!;
+    config = { ...config, outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Deploy failed" }] };
+    const adapter = herdrAdapter("output-match");
     disposers.push(await adapter.start({ emit: (items) => emitted.push(items), retract: () => undefined }));
     await vi.waitUntil(() => emitted.length > 0);
     expect(request).toMatchObject({ method: "events.subscribe", params: { subscriptions: [{ type: "pane.output_matched", pane_id: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] } });
-    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: "w1:captain" } }]);
+    expect(emitted.at(-1)).toMatchObject([{ kind: "custom", title: "Deploy failed", respond: { channel: "relay", target: RELAY_PANE } }]);
+  });
+
+  it("refreshes an existing output-match card when relay discovery changes", async () => {
+    const relay = { target: undefined as string | undefined };
+    let notifyRelayTargetChanged: (() => void) | undefined;
+    const store = createInboxStore(config.helmStateDir);
+    const updates: InboxItem[] = [];
+    store.subscribe((event) => { if (event.type === "item.upsert") updates.push(event.data as InboxItem); });
+    server = createServer((socket) => { connection = socket; socket.once("data", () => {
+      socket.write('{"result":{"type":"subscription_started"}}\n');
+      socket.write('{"event":"pane.output_matched","data":{"pane_id":"w1:p2","matched_line":"deploy failed","read":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"t1","source":"visible","format":"plain","text":"deploy failed","revision":4,"truncated":false}}}\n');
+    }); });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    config = { ...config, outputMatches: [{ id: "deploy-failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" } }] };
+    const adapter = herdrAdapter("output-match", {
+      relayTarget: () => relay.target,
+      onRelayTargetChanged: (listener) => { notifyRelayTargetChanged = listener; return () => { notifyRelayTargetChanged = undefined; }; },
+    });
+    disposers.push(await adapter.start({ emit: (items) => store.reconcile("output-match", items), retract: () => undefined }));
+    await vi.waitUntil(() => store.listOpen().length === 1);
+    const initial = store.listOpen()[0]!;
+    expect(initial.respond).toEqual({ channel: "none" });
+    relay.target = RELAY_PANE;
+    notifyRelayTargetChanged?.();
+    const refreshed = store.listOpen()[0]!;
+    expect(refreshed).toMatchObject({ id: initial.id, respond: { channel: "relay", target: RELAY_PANE } });
+    const updateCount = updates.length;
+    notifyRelayTargetChanged?.();
+    expect(updates).toHaveLength(updateCount);
   });
 
   it("uses the event source and emits every overlapping configured pattern", async () => {
@@ -135,7 +181,7 @@ describe("output-match adapter", () => {
       { id: "visible-a", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Visible failure" },
       { id: "visible-b", paneId: "w1:p2", source: "visible", match: { type: "regex", value: "deploy" }, title: "Deploy output" },
     ] };
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!);
+    await start(herdrAdapter("output-match"));
     await vi.waitUntil(() => emitted.at(-1)?.length === 2);
     expect(emitted.at(-1)?.map((entry) => entry.id)).toEqual([
       "output-match:visible-a:1:w1:p2:4", "output-match:visible-b:2:w1:p2:4",
@@ -152,7 +198,7 @@ describe("output-match adapter", () => {
       { id: "failure", paneId: "w1:p2", source: "visible", match: { type: "substring", value: "failed" }, title: "Failure" },
       { id: "failure", paneId: "w1:p2", source: "visible", match: { type: "regex", value: "deploy" }, title: "Deploy" },
     ] };
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "output-match")!);
+    await start(herdrAdapter("output-match"));
     await vi.waitUntil(() => emitted.at(-1)?.length === 2);
     expect(emitted.at(-1)?.map((entry) => entry.id)).toEqual([
       "output-match:failure:0:w1:p2:4", "output-match:failure:1:w1:p2:4",
@@ -190,12 +236,13 @@ describe("agent-state adapter", () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    await start(herdrAdapter("agent-state"));
     await vi.waitUntil(() => requests.length === 2);
     expect(requests[1]).toMatchObject({ method: "events.subscribe", params: { subscriptions: expect.arrayContaining([
       { type: "pane.agent_status_changed", pane_id: "w1:p9" },
     ]) } });
     await vi.waitUntil(() => emitted.at(-1)?.some((entry) => entry.id === "agent-state:w1:p9"));
+    expect(emitted.at(-1)).toMatchObject([{ id: "agent-state:w1:p9", respond: { channel: "relay", target: RELAY_PANE } }]);
   });
 
   it("reconciles a blocker that appears before the first subscription is ready", async () => {
@@ -213,8 +260,35 @@ describe("agent-state adapter", () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
-    expect(emitted.at(-1)).toMatchObject([{ id: "agent-state:w1:p1", kind: "blocker" }]);
+    await start(herdrAdapter("agent-state", { relayTarget: () => undefined }));
+    expect(emitted.at(-1)).toMatchObject([{ id: "agent-state:w1:p1", kind: "blocker", respond: { channel: "none" } }]);
+  });
+
+  it("refreshes an existing blocked-agent card when relay discovery changes", async () => {
+    const relay = { target: undefined as string | undefined };
+    let notifyRelayTargetChanged: (() => void) | undefined;
+    const herdr = join(root, "herdr-relay-refresh");
+    writeFileSync(herdr, "#!/bin/sh\nprintf '%s\\n' '{\"id\":\"1\",\"result\":{\"type\":\"agent_list\",\"agents\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"tab_id\":\"t1\",\"terminal_id\":\"term-1\",\"agent_status\":\"blocked\",\"focused\":false}]}}'\n");
+    chmodSync(herdr, 0o755);
+    config = { ...config, herdrBin: herdr };
+    server = createServer((socket) => {
+      connections.add(socket);
+      socket.once("data", () => socket.write('{"result":{"type":"subscription_started"}}\n'));
+    });
+    await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
+    await start(herdrAdapter("agent-state", {
+      relayTarget: () => relay.target,
+      onRelayTargetChanged: (listener) => {
+        notifyRelayTargetChanged = listener;
+        return () => { notifyRelayTargetChanged = undefined; };
+      },
+    }));
+    const initial = emitted.at(-1)![0]!;
+    expect(initial).toMatchObject({ id: "agent-state:w1:p1", respond: { channel: "none" } });
+    relay.target = RELAY_PANE;
+    notifyRelayTargetChanged?.();
+    const refreshed = emitted.at(-1)![0]!;
+    expect(refreshed).toMatchObject({ id: initial.id, respond: { channel: "relay", target: RELAY_PANE } });
   });
 
   it("prunes a pane absent from the post-ready agent snapshot", async () => {
@@ -232,7 +306,7 @@ describe("agent-state adapter", () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    await start(herdrAdapter("agent-state"));
     expect(emitted.at(-1)).toEqual([]);
   });
 
@@ -256,7 +330,7 @@ describe("agent-state adapter", () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(config.herdrSocketPath, resolve));
-    await start(createHerdrAdapters(config).find((candidate) => candidate.id === "agent-state")!);
+    await start(herdrAdapter("agent-state"));
     await vi.waitUntil(() => requests.some((request) => {
       const paneIds = (request as { params?: { subscriptions?: Array<{ pane_id?: string }> } }).params?.subscriptions?.map((entry) => entry.pane_id) ?? [];
       return paneIds.includes("w1:p1") && !paneIds.includes("w9:p1");

@@ -38,12 +38,26 @@ function boundedInteger(raw: string | null, min: number, max: number): number | 
 }
 
 /**
- * The bounded one-shot keys Converse mode may send.
+ * The bounded key set helm may send.
  *
- * helm is a channel, not a keyboard: there is no raw keystream and no takeover.
- * Each name maps to the Herdr key spelling (`esc` is Herdr's canonical Escape).
+ * helm is a channel, not a keyboard: there is no raw byte stream and no
+ * takeover. A keystroke the operator makes in the terminal is resolved to one
+ * of these names, or accumulated into a line of text — it is never forwarded as
+ * raw bytes. Every name here is one Herdr accepts on `pane send-keys` (verified
+ * against Herdr 0.8.2 / protocol 20); Herdr rejects the rest, so offering more
+ * would surface as an opaque 502 rather than a refusal helm can explain.
  */
-export const TERMINAL_KEYS = ["enter", "escape", "c-c"] as const;
+export const TERMINAL_KEYS = [
+  "enter",
+  "escape",
+  "c-c",
+  "tab",
+  "backspace",
+  "up",
+  "down",
+  "left",
+  "right",
+] as const;
 
 const paneIdSchema = z.string().min(1);
 /** Tab, newline, C0 controls, and DEL — paneRun would submit each line separately. */
@@ -56,8 +70,18 @@ const converseTextSchema = z
     message: "text must be a single line without tab, newline, or control characters",
   });
 
+/**
+ * One-shot text, or exactly one named key.
+ *
+ * `submit` decides whether the line carries a trailing Enter. Omitted or `true`
+ * submits it (`herdr pane run`), which is what the Converse composer does.
+ * `false` types the line and leaves the cursor on it (`herdr pane send-text`),
+ * so a keyboard-shaped surface can commit it with a separate `enter` key.
+ */
 const terminalInputSchema = z.union([
-  z.object({ paneId: paneIdSchema, text: converseTextSchema }).strict(),
+  z
+    .object({ paneId: paneIdSchema, text: converseTextSchema, submit: z.boolean().optional() })
+    .strict(),
   z.object({ paneId: paneIdSchema, key: z.enum(TERMINAL_KEYS) }).strict(),
 ]);
 

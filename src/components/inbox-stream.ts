@@ -15,22 +15,37 @@ export interface InboxStream {
 }
 
 /**
- * Follow the inbox SSE stream and keep the open set plus cards answered in
- * this tab. A snapshot replaces only the open set so answered history from
- * this session stays on the Answered filter (AC 11).
+ * Follow the inbox SSE stream and keep the open set plus the answered and
+ * dismissed cards the server replayed.
+ *
+ * A snapshot replaces only the OPEN set. `snapshot.begin` carries the open ids,
+ * so a handled card in the same snapshot lands in the handled map instead and
+ * the Answered / Dismissed tabs survive a reload (AC 11).
+ *
+ * Everything that touches `EventSource` happens inside the effect. Probing it
+ * during render would make the server say "unsupported" and the first client
+ * render say "loading", and the resulting hydration failure regenerates the
+ * whole tree — remounting the terminal and its WebSocket with it.
  */
 export function useInboxItems(): InboxStream {
-  const supported = typeof EventSource !== "undefined";
   const [items, setItems] = useState<readonly InboxItem[]>([]);
-  const [status, setStatus] = useState<InboxStreamStatus>(supported ? "loading" : "error");
-  const [error, setError] = useState<string | null>(
-    supported ? null : "Inbox stream is unavailable in this browser",
-  );
+  const [status, setStatus] = useState<InboxStreamStatus>("loading");
+  const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
   const retry = useCallback(() => setGeneration((value) => value + 1), []);
 
   useEffect(() => {
-    if (!supported) return;
+    const fail = (message: string): (() => void) => {
+      const timer = window.setTimeout(() => {
+        setStatus("error");
+        setError(message);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    };
+
+    if (typeof EventSource === "undefined") {
+      return fail("Inbox stream is unavailable in this browser");
+    }
 
     let open = new Map<string, InboxItem>();
     const handled = new Map<string, InboxItem>();
@@ -40,16 +55,15 @@ export function useInboxItems(): InboxStream {
     try {
       stream = new EventSource("/api/events");
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      const timer = window.setTimeout(() => {
-        setStatus("error");
-        setError(message);
-      }, 0);
-      return () => window.clearTimeout(timer);
+      return fail(cause instanceof Error ? cause.message : String(cause));
     }
 
     const publish = (): void => {
       setItems([...handled.values(), ...open.values()]);
+    };
+    const ready = (): void => {
+      setStatus("ready");
+      setError(null);
     };
 
     stream.addEventListener("snapshot.begin", () => {
@@ -69,8 +83,7 @@ export function useInboxItems(): InboxStream {
         snapshotOpen.delete(item.id);
       }
       if (!snapshotting) {
-        setStatus("ready");
-        setError(null);
+        ready();
         publish();
       }
     });
@@ -84,11 +97,11 @@ export function useInboxItems(): InboxStream {
     stream.addEventListener("snapshot.end", () => {
       open = snapshotOpen;
       snapshotting = false;
-      setStatus("ready");
-      setError(null);
+      ready();
       publish();
     });
     stream.onerror = () => {
+      // EventSource reconnects on its own; only a CLOSED stream is terminal.
       if (stream.readyState === EventSource.CLOSED) {
         setStatus("error");
         setError("Inbox stream closed");
@@ -98,7 +111,7 @@ export function useInboxItems(): InboxStream {
     return () => {
       stream.close();
     };
-  }, [generation, supported]);
+  }, [generation]);
 
   return { items, status, error, retry };
 }

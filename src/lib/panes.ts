@@ -116,6 +116,22 @@ export class PaneDirectory {
     await this.refresh();
   }
 
+  /**
+   * The fleet tasks from the most recent snapshot, or `null` before the first
+   * one lands.
+   *
+   * `fm-fleet-snapshot.sh` budgets up to 180s, so the fleet view reads this
+   * cache rather than running the seam per request.
+   */
+  tasks(): readonly FleetTask[] | null {
+    return this.#snapshotTasks;
+  }
+
+  /** The most recent pane discovery, or `null` before the first one lands. */
+  discovery(): PaneDiscovery | null {
+    return this.#discovery;
+  }
+
   close(): void {
     this.#closed = true;
     this.#stream?.close();

@@ -51,7 +51,7 @@ afterEach(() => {
 describe("native inbox notifications", () => {
   it("announces a new blocking phase after demotion", () => {
     stateDir = mkdtempSync(join(tmpdir(), "helm-runtime-"));
-    const runtime = createInboxRuntime({ ...CONFIG, helmStateDir: stateDir });
+    const runtime = createInboxRuntime({ ...CONFIG, helmStateDir: stateDir }, { relayTarget: () => undefined });
 
     runtime.store.reconcile("fake", [item("first blocking phase")]);
     runtime.store.reconcile("fake", [{ ...item("attention phase"), urgency: "attention" }]);
@@ -63,7 +63,7 @@ describe("native inbox notifications", () => {
 
   it("suppresses a visible occurrence through updates until it is re-raised", () => {
     stateDir = mkdtempSync(join(tmpdir(), "helm-runtime-"));
-    const runtime = createInboxRuntime({ ...CONFIG, helmStateDir: stateDir });
+    const runtime = createInboxRuntime({ ...CONFIG, helmStateDir: stateDir }, { relayTarget: () => undefined });
     const token = runtime.visibility.createSession();
     runtime.visibility.update(token, 0, true, [item("first").id]);
 

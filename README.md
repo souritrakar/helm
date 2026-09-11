@@ -32,8 +32,9 @@ bin/helm start
 Open `http://127.0.0.1:7333`. `bin/helm stop` stops the process. `bin/helm
 status` and `bin/helm logs` inspect it.
 
-Set `HELM_CAPTAIN_PANE` to firstmate's pane id if you want relay-class inbox
-answers to reach that pane. Without it, those cards stay non-actionable.
+`HELM_CAPTAIN_PANE` is optional. When it is unset, helm relays replies to the
+firstmate pane discovered from Herdr. Cards remain read-only only when neither
+source identifies a reachable pane.
 
 Development without the launcher:
 
@@ -48,21 +49,25 @@ terminal WebSocket and the inbox SSE stream.
 
 ## What it shows
 
-The page is a persisted split: terminal on one side, inbox on the other.
+The page is a persisted split with the Inbox and Fleet panel on the left and a
+collapsible terminal on the right. On narrow screens the terminal starts
+collapsed so pending work is visible first.
 
 **Terminal.** A read-only Herdr observer of the selected pane, including colour.
 A dropdown lists discovered panes. Task-backed panes show the task title. The
 Converse field sends one single-line message (`herdr pane run`) or one named
-key. helm does not take control of the pane, and it does not start or stop
-Herdr sessions.
+key. Clicking the read-only mirror focuses that field; helm does not take
+control of the pane or start or stop Herdr sessions.
 
-**Inbox.** Eight read-only adapters publish a full open set. The store
-reconciles by id and streams changes over SSE. Blocking / all / answered
-filters sit on the list. Keyed status decisions answer through
+**Inbox.** Nine read-only adapters publish a full open set. The store
+reconciles by id and streams changes over SSE. Open, Answered, and Dismissed
+tabs group cards into Decisions, Approvals, Answers, and Info. Keyed status decisions answer through
 `fm-send.sh --resolve-key`. Captain-held, merge, credential, and other
-freeform cards relay to the firstmate pane when `HELM_CAPTAIN_PANE` is set.
-Answered history and the response audit live under `HELM_STATE_DIR`, never
-under `$FM_HOME`.
+freeform cards relay to the configured or discovered firstmate pane. A card
+with no reachable relay pane is honestly read-only. Answered and dismissed
+history (including each card's captured body) and the response audit live
+under `HELM_STATE_DIR`, never under `$FM_HOME`. The Fleet panel summarizes
+cached task health and flags work that needs you.
 
 Notifications announce blocking items. They never answer or mutate. Browser OS
 notifications fire only while the tab is hidden.
@@ -86,7 +91,7 @@ constants, so remote access later is a config swap rather than a code change.
 | `HERDR_BIN` | `herdr` | Herdr executable, resolved on `PATH` unless absolute. |
 | `HELM_PORT` | `7333` | HTTP port. |
 | `HELM_BIND` | `127.0.0.1` | Bind address. |
-| `HELM_CAPTAIN_PANE` | *(unset)* | The firstmate pane id that receives relay-class human replies. Without it, relay-class cards are non-actionable. |
+| `HELM_CAPTAIN_PANE` | *(unset)* | Optional override for the firstmate pane that receives relay-class human replies. When unset, helm uses the discovered firstmate pane; cards are non-actionable only if neither is reachable. |
 | `HELM_OUTPUT_MATCHES` | `[]` | JSON array of Herdr output-match subscriptions. Each entry needs `id`, `paneId`, `source` (`visible`, `recent`, `recent_unwrapped`, or `detection`), and `match` (`{ "type": "substring" | "regex", "value": "..." }`). `title` and `urgency` are optional. |
 
 For example, to surface a visible line containing `ready` from pane `w1:p1`:
@@ -131,6 +136,8 @@ These local HTTP endpoints are served from `server.ts`
 | `GET /api/inbox` | Returns the current open items. |
 | `GET /api/events` | Opens an SSE stream. A matching `Last-Event-ID` resumes buffered events. A missing, stale, or different-process id receives a complete snapshot. |
 | `POST /api/inbox/:id/respond` | Delivers exactly one declared option (`value`) or permitted freeform reply (`text`), then records the result. Requests must be JSON and pass the local operator gate. |
+| `POST /api/inbox/:id/dismiss` | Dismisses an open card locally in helm. It calls no firstmate seam. |
+| `GET /api/fleet` | Returns the cached, human-facing fleet overview used by the Fleet panel. |
 | `GET /api/inbox/visibility` | Mints a helm-session token for presence reports. Local operator gate. |
 | `POST /api/inbox/visibility` | Reports whether the tab is visible and focused (`active`) and which rendered card ids are on screen. Requires the session token (`X-Helm-Visibility-Session`) and a monotonic `sequence`. Presence only. It never answers or mutates inbox items. |
 
@@ -139,8 +146,10 @@ status decisions use `fm-send.sh --resolve-key`, including when the decision
 has no structured options. Captain-held, merge, credential, destructive,
 irreversible, security-sensitive, and other freeform replies relay to
 firstmate. Every attempted route is appended to `$HELM_STATE_DIR/actions.jsonl`.
-Answered and dismissed item ids persist in `$HELM_STATE_DIR/inbox-history.json`
-and are never automatically pruned.
+Answered and dismissed cards, their captured bodies, and answered outcomes
+persist in `$HELM_STATE_DIR/inbox-history.json` and are never automatically
+pruned. Version-1 history still suppresses a re-raised id but has no card body
+to display.
 
 ## Terminal bridge
 
@@ -152,7 +161,7 @@ keyboard stream. A dropped observer can be reconnected from the panel.
 | Endpoint | Behavior |
 | --- | --- |
 | `GET /api/term?cols=<cols>&rows=<rows>` | WebSocket terminal mirror. The initial viewport must be 2–500 columns and 2–300 rows. Invalid or absent dimensions use 80×24. |
-| `POST /api/term/input` | Sends exactly one JSON `{ "paneId", "text" }` message (single line: no tab, newline, or control characters), or a named `{ "paneId", "key" }` key (`enter`, `escape`, or `c-c`), to a currently discovered pane. |
+| `POST /api/term/input` | Sends exactly one JSON `{ "paneId", "text", "submit"? }` message (single line: no tab, newline, or control characters), or a named `{ "paneId", "key" }` key. Text submits with Enter unless `submit` is `false`, which types it without Enter. Supported keys are `enter`, `escape`, `tab`, `backspace`, `up`, `down`, `left`, `right`, and `c-c`. |
 
 Both terminal surfaces pass the same local operator gate as inbox mutations.
 Terminal output is an observer stream. A resize, pane switch, or sequence gap

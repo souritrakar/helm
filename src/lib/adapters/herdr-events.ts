@@ -1,5 +1,6 @@
 /** Read-only Herdr subscription adapters (Lane D2). */
 import type { HelmConfig, OutputMatchConfig } from "../config";
+import { relay, type StateAdapterDeps } from "./state";
 import { agentList, subscribeEvents, type HerdrEventStream } from "../herdr";
 import { inboxItemId, type InboxAdapter, type InboxItem } from "../types";
 
@@ -7,8 +8,13 @@ function item(source: string, naturalKey: string, fields: Omit<InboxItem, "id" |
   return { id: inboxItemId(source, naturalKey), source, state: "open", openedAt: new Date().toISOString(), ...fields };
 }
 
+function refreshRelay(items: Map<string, InboxItem>, deps: StateAdapterDeps): InboxItem[] {
+  for (const [id, current] of items) items.set(id, { ...current, respond: relay(deps) });
+  return [...items.values()];
+}
+
 /** Blocking cards for the live blocked set, reconstructed from status events. */
-function agentState(config: HelmConfig): InboxAdapter {
+function agentState(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
   return {
     id: "agent-state",
     async start(ctx) {
@@ -17,9 +23,10 @@ function agentState(config: HelmConfig): InboxAdapter {
       const agents = await agentList(config);
       const panes = new Set(agents.map((agent) => agent.pane_id));
       for (const agent of agents.filter((candidate) => candidate.agent_status === "blocked")) {
-        blocked.set(agent.pane_id, blockedItem(config, agent.pane_id, agent.terminal_title ?? agent.agent));
+        blocked.set(agent.pane_id, blockedItem(agent.pane_id, agent.terminal_title ?? agent.agent, deps));
       }
       ctx.emit([...blocked.values()]);
+      const unsubscribeRelayTarget = deps.onRelayTargetChanged?.(() => ctx.emit(refreshRelay(blocked, deps))) ?? (() => undefined);
       let stopped = false;
       let current: HerdrEventStream | undefined;
       let generation = 0;
@@ -49,14 +56,14 @@ function agentState(config: HelmConfig): InboxAdapter {
             if (stopped || generation !== ownGeneration) return;
             if (event.event === "pane.agent_status_changed") {
               const { pane_id: paneId, agent_status: status, title, agent } = event.data;
-              if (status === "blocked") blocked.set(paneId, blockedItem(config, paneId, title ?? agent));
+              if (status === "blocked") blocked.set(paneId, blockedItem(paneId, title ?? agent, deps));
               else blocked.delete(paneId);
               ctx.emit([...blocked.values()]);
             } else if (event.event === "pane_created") {
               const pane = event.data.pane;
               if (tombstoned.has(pane.pane_id)) return;
               panes.add(pane.pane_id);
-              if (pane.agent_status === "blocked") blocked.set(pane.pane_id, blockedItem(config, pane.pane_id, pane.terminal_title ?? pane.agent));
+              if (pane.agent_status === "blocked") blocked.set(pane.pane_id, blockedItem(pane.pane_id, pane.terminal_title ?? pane.agent, deps));
               else blocked.delete(pane.pane_id);
               ctx.emit([...blocked.values()]);
               queueSubscription();
@@ -93,7 +100,7 @@ function agentState(config: HelmConfig): InboxAdapter {
         for (const agent of liveAgents) {
           if (tombstoned.has(agent.pane_id)) continue;
           panes.add(agent.pane_id);
-          if (agent.agent_status === "blocked") blocked.set(agent.pane_id, blockedItem(config, agent.pane_id, agent.terminal_title ?? agent.agent));
+          if (agent.agent_status === "blocked") blocked.set(agent.pane_id, blockedItem(agent.pane_id, agent.terminal_title ?? agent.agent, deps));
         }
         ctx.emit([...blocked.values()]);
       };
@@ -120,32 +127,38 @@ function agentState(config: HelmConfig): InboxAdapter {
       }
 
       try {
-        await subscribe(true);
+        try {
+          await subscribe(true);
+        } catch (cause) {
+          console.error("agent-state: subscription failed", cause);
+          if (!forgetMissingPane(cause)) throw cause;
+          await subscribe(true);
+        }
       } catch (cause) {
-        console.error("agent-state: subscription failed", cause);
-        if (!forgetMissingPane(cause)) throw cause;
-        await subscribe(true);
+        unsubscribeRelayTarget();
+        throw cause;
       }
-      return { [Symbol.dispose]() { stopped = true; generation++; if (debounce !== undefined) clearTimeout(debounce); current?.close(); } };
+      return { [Symbol.dispose]() { stopped = true; generation++; if (debounce !== undefined) clearTimeout(debounce); current?.close(); unsubscribeRelayTarget(); } };
     },
   };
 }
 
-function blockedItem(config: HelmConfig, paneId: string, title: string | null | undefined): InboxItem {
+function blockedItem(paneId: string, title: string | null | undefined, deps: StateAdapterDeps): InboxItem {
   return item("agent-state", paneId, {
     kind: "blocker", urgency: "blocking", title: title ?? `Agent blocked in ${paneId}`,
     detail: "Herdr reported a blocked agent.", options: [], allowFreeform: true,
-    respond: relayRespond(config), evidence: [],
+    respond: relay(deps), evidence: [],
   });
 }
 
-function outputMatch(config: HelmConfig): InboxAdapter {
+function outputMatch(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter {
   return {
     id: "output-match",
     async start(ctx) {
       const patterns = config.outputMatches ?? [];
       if (patterns.length === 0) return { [Symbol.dispose]() {} };
       const matched = new Map<string, InboxItem>();
+      const unsubscribeRelayTarget = deps.onRelayTargetChanged?.(() => ctx.emit(refreshRelay(matched, deps))) ?? (() => undefined);
       const stream = subscribeEvents(config, patterns.map(subscriptionFor), (event) => {
         if (event.event !== "pane.output_matched") return;
         const matching = patterns.map((pattern, index) => ({ pattern, index })).filter(({ pattern }) => pattern.paneId === event.data.pane_id && pattern.source === event.data.read.source && lineMatches(pattern, event.data.matched_line));
@@ -155,14 +168,19 @@ function outputMatch(config: HelmConfig): InboxAdapter {
           matched.set(key, item("output-match", key, {
             kind: "custom", urgency: pattern.urgency ?? "attention", title: pattern.title ?? `Output matched: ${pattern.id}`,
             detail: event.data.matched_line, options: [], allowFreeform: true,
-            respond: relayRespond(config), evidence: [],
+            respond: relay(deps), evidence: [],
           }));
         }
         ctx.emit([...matched.values()]);
       });
-      await stream.ready;
+      try {
+        await stream.ready;
+      } catch (cause) {
+        unsubscribeRelayTarget();
+        throw cause;
+      }
       reportStreamFailure("output-match", stream);
-      return { [Symbol.dispose]() { stream.close(); } };
+      return { [Symbol.dispose]() { stream.close(); unsubscribeRelayTarget(); } };
     },
   };
 }
@@ -174,9 +192,6 @@ function lineMatches(pattern: OutputMatchConfig, line: string): boolean {
   if (pattern.match.type === "substring") return line.includes(pattern.match.value);
   try { return new RegExp(pattern.match.value).test(line); } catch { return false; }
 }
-function relayRespond(config: HelmConfig) {
-  return config.captainPane === undefined ? { channel: "none" as const } : { channel: "relay" as const, target: config.captainPane };
-}
 function reportStreamFailure(id: string, stream: HerdrEventStream): void { stream.closed.catch((cause: unknown) => console.error(`${id}: Herdr event stream ended`, cause)); }
 
-export function createHerdrAdapters(config: HelmConfig): InboxAdapter[] { return [agentState(config), outputMatch(config)]; }
+export function createHerdrAdapters(config: HelmConfig, deps: StateAdapterDeps): InboxAdapter[] { return [agentState(config, deps), outputMatch(config, deps)]; }

@@ -78,10 +78,25 @@ interface HistoryRecord {
   readonly state: Extract<InboxItemState, "answered" | "dismissed">;
   readonly openedAt: string;
   readonly answeredAt: string;
+  /**
+   * The card as it read when it was handled.
+   *
+   * Absent only in a version-1 file, which recorded suppression but no body.
+   * Without it the id still stays suppressed, but the card cannot be rendered
+   * on the Answered / Dismissed tabs after a restart.
+   */
+  readonly item?: InboxItem;
 }
 
+/**
+ * Version 2 adds {@link HistoryRecord.item}. A version-1 file still loads: its
+ * records suppress re-raise exactly as before and are simply not renderable.
+ */
+type HistoryVersion = 1 | 2;
+const HISTORY_VERSION = 2;
+
 interface HistoryFile {
-  readonly version: 1;
+  readonly version: HistoryVersion;
   readonly items: Record<string, HistoryRecord>;
 }
 
@@ -129,6 +144,22 @@ export class InboxStore {
   /** Open items currently in the store, in insertion order. */
   listOpen(): InboxItem[] {
     return [...this.items.values()].filter((item) => item.state === "open");
+  }
+
+  /**
+   * Answered / dismissed cards, most recently handled first.
+   *
+   * Read from persisted history rather than the open set, so the Answered and
+   * Dismissed tabs survive a restart and show cards this process never had
+   * open. A version-1 history record carries no body and is skipped.
+   */
+  listHandled(): InboxItem[] {
+    const handled: InboxItem[] = [];
+    for (const [id, record] of this.history) {
+      if (record.item === undefined) continue;
+      handled.push({ ...record.item, id, state: record.state, openedAt: record.openedAt, answeredAt: record.answeredAt });
+    }
+    return handled.sort((a, b) => (b.answeredAt ?? "").localeCompare(a.answeredAt ?? ""));
   }
 
   /** Look up any known item, open or not. */
@@ -205,11 +236,11 @@ export class InboxStore {
    * it. Emits an upsert with `state: "answered"` then removes it from the open
    * set with a retract (clients that only track open cards drop it).
    */
-  markAnswered(id: string, answeredAt: string = this.now()): InboxItem | undefined {
-    return this.markHandled(id, "answered", answeredAt);
+  markAnswered(id: string, answeredAt: string = this.now(), answer?: string): InboxItem | undefined {
+    return this.markHandled(id, "answered", answeredAt, answer);
   }
 
-  /** Mark an open item dismissed and persist it. */
+  /** Mark an open item dismissed and persist it. A dismissal has no answer. */
   markDismissed(id: string, answeredAt: string = this.now()): InboxItem | undefined {
     return this.markHandled(id, "dismissed", answeredAt);
   }
@@ -279,10 +310,15 @@ export class InboxStore {
   /**
    * Build a cold-connect / non-resumable snapshot with wire-level boundaries.
    *
-   * Sequence: `snapshot.begin` (open ids) → `item.upsert` per open item →
-   * `snapshot.end`. Clients clear their open set on begin, apply upserts, and
-   * finish on end — so cards retracted while disconnected do not linger
-   * (captain decision `sse-snapshot-cannot-retract-stale-cards`).
+   * Sequence: `snapshot.begin` (open ids) → `item.upsert` per handled card →
+   * `item.upsert` per open item → `snapshot.end`. Clients clear their open set
+   * on begin, apply upserts, and finish on end — so cards retracted while
+   * disconnected do not linger (captain decision
+   * `sse-snapshot-cannot-retract-stale-cards`).
+   *
+   * `snapshot.begin` carries only the OPEN ids, so a handled upsert cannot
+   * re-enter the open set; it lands in the client's handled map and populates
+   * the Answered / Dismissed tabs on a cold connect.
    *
    * Events are assigned resume ids and retained in the buffer, but are not
    * broadcast to live subscribers (those already hold a live stream).
@@ -291,6 +327,9 @@ export class InboxStore {
     const open = this.listOpen();
     const events: InboxStoreEvent[] = [];
     events.push(this.retainEvent({ type: "snapshot.begin", data: { ids: open.map((item) => item.id) } }));
+    for (const item of this.listHandled()) {
+      events.push(this.retainEvent({ type: "item.upsert", data: item }));
+    }
     for (const item of open) {
       events.push(this.retainEvent({ type: "item.upsert", data: item }));
     }
@@ -307,16 +346,21 @@ export class InboxStore {
     id: string,
     state: "answered" | "dismissed",
     answeredAt: string,
+    answer?: string,
   ): InboxItem | undefined {
     const existing = this.items.get(id);
     if (existing === undefined) return undefined;
-    const record = {
+    const handled: InboxItem = { ...existing, state, answeredAt, answer };
+    // The body is retained so the card can still be READ on the Answered /
+    // Dismissed tabs after a restart. It is a record of what was handled, not a
+    // live card: it never re-enters the open set.
+    const record: HistoryRecord = {
       state,
       openedAt: existing.openedAt,
       answeredAt,
+      item: handled,
     };
     this.history.set(id, record);
-    const handled: InboxItem = { ...existing, state, answeredAt };
     let persistError: unknown;
     try {
       this.persistHistory();
@@ -373,7 +417,11 @@ export class InboxStore {
     }
     if (raw.trim() === "") return;
     const parsed = JSON.parse(raw) as HistoryFile;
-    if (parsed.version !== 1 || typeof parsed.items !== "object" || parsed.items === null) {
+    if (
+      (parsed.version !== 1 && parsed.version !== HISTORY_VERSION) ||
+      typeof parsed.items !== "object" ||
+      parsed.items === null
+    ) {
       throw new Error(`InboxStore: history file ${this.historyFile} has an unknown shape`);
     }
     for (const [id, record] of Object.entries(parsed.items)) {
@@ -386,7 +434,7 @@ export class InboxStore {
     for (const [id, record] of this.history) {
       items[id] = record;
     }
-    const body: HistoryFile = { version: 1, items };
+    const body: HistoryFile = { version: HISTORY_VERSION, items };
     mkdirSync(dirname(this.historyFile), { recursive: true });
     const tmp = `${this.historyFile}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`, "utf8");

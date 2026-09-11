@@ -199,6 +199,26 @@ export function paneSendKeys(
 }
 
 /**
+ * Send literal text to a pane WITHOUT a trailing Enter.
+ *
+ * This is what a keyboard-shaped surface needs: {@link paneRun} appends Enter,
+ * so it can only submit whole lines. `text` is one argv element and is never
+ * joined into a shell string. Submitting is a separate `enter` key press, so
+ * helm still sends only whole lines plus the bounded key set — never a raw
+ * byte stream.
+ */
+export function paneSendText(
+  cfg: HelmConfig,
+  paneId: string,
+  text: string,
+): Promise<ExecResult> {
+  if (text === "") {
+    return Promise.reject(new Error("paneSendText: text must not be empty"));
+  }
+  return runArgv(cfg.herdrBin, ["pane", "send-text", paneId, text]);
+}
+
+/**
  * Surface a helm inbox nudge through Herdr's native notification channel.
  *
  * This is deliberately a one-shot display operation: it does not attach to,

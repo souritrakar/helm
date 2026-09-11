@@ -7,7 +7,14 @@ import type { Layout } from "react-resizable-panels";
  */
 export const splitLayoutCookieName = "helm.split-layout";
 
-export const splitDefaultLayout: Layout = { terminal: 56, inbox: 44 };
+/** Whether the terminal starts collapsed. Same reason it is a cookie. */
+export const terminalCollapsedCookieName = "helm.terminal-collapsed";
+
+/**
+ * Inbox first: what needs the human comes before the machine output it came
+ * from, and on a narrow screen the first panel is the one in reach.
+ */
+export const splitDefaultLayout: Layout = { inbox: 52, terminal: 48 };
 
 export function parseSplitLayout(value: string | undefined): Layout | undefined {
   if (!value) return undefined;
@@ -25,6 +32,23 @@ export function parseSplitLayout(value: string | undefined): Layout | undefined 
 }
 
 export function saveSplitLayout(layout: Layout): void {
-  const value = encodeURIComponent(JSON.stringify(layout));
-  document.cookie = `${splitLayoutCookieName}=${value}; path=/; max-age=31536000; samesite=lax`;
+  writeCookie(splitLayoutCookieName, encodeURIComponent(JSON.stringify(layout)));
+}
+
+/**
+ * `undefined` means the operator has never chosen, which lets a narrow screen
+ * default to collapsed without overriding a deliberate choice.
+ */
+export function parseTerminalCollapsed(value: string | undefined): boolean | undefined {
+  if (value === "1") return true;
+  if (value === "0") return false;
+  return undefined;
+}
+
+export function saveTerminalCollapsed(collapsed: boolean): void {
+  writeCookie(terminalCollapsedCookieName, collapsed ? "1" : "0");
+}
+
+function writeCookie(name: string, value: string): void {
+  document.cookie = `${name}=${value}; path=/; max-age=31536000; samesite=lax`;
 }

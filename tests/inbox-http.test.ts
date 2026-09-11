@@ -125,6 +125,54 @@ describe("GET /api/inbox", () => {
   });
 });
 
+describe("POST /api/inbox/:id/dismiss", () => {
+  const post = (id: string) =>
+    fetch(`${baseUrl}/api/inbox/${encodeURIComponent(id)}/dismiss`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+
+  it("closes the card on the operator's board and calls no firstmate seam", async () => {
+    store.reconcile("fake", [item("k1")]);
+    const id = inboxItemId("fake", "k1");
+
+    const res = await post(id);
+
+    expect(res.status).toBe(200);
+    expect(store.listOpen()).toHaveLength(0);
+    expect(store.isHandled(id)).toBe(true);
+    expect(store.listHandled()).toMatchObject([{ id, state: "dismissed" }]);
+    // A dismissal is not an answer: nothing was delivered, so nothing is recorded.
+    expect(store.listHandled()[0]?.answer).toBeUndefined();
+  });
+
+  it("refuses a second dismissal of the same card", async () => {
+    store.reconcile("fake", [item("k1")]);
+    const id = inboxItemId("fake", "k1");
+    await post(id);
+
+    const res = await post(id);
+
+    expect(res.status).toBe(409);
+  });
+
+  it("answers 404 for a card that is not open", async () => {
+    const res = await post(inboxItemId("fake", "never-existed"));
+
+    expect(res.status).toBe(404);
+  });
+
+  it("emits an upsert then a retract, so a live client moves the card between tabs", async () => {
+    store.reconcile("fake", [item("k1")]);
+    const seen: string[] = [];
+    store.subscribe((event) => seen.push(event.type));
+
+    await post(inboxItemId("fake", "k1"));
+
+    expect(seen).toEqual(["item.upsert", "item.retract"]);
+  });
+});
+
 describe("inbox visibility signal", () => {
   it("accepts presence only from a minted, operator-gated helm session", async () => {
     const session = await fetch(`${baseUrl}/api/inbox/visibility`);

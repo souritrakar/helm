@@ -10,7 +10,7 @@ import { installBrowserStubs, openStream } from "./browser-stubs";
 import { inboxItemId, type InboxItem } from "@/lib/types";
 
 vi.mock("@/components/terminal-pane", () => ({
-  TerminalPane: () => <div aria-label="Read-only terminal mirror" />,
+  TerminalPane: () => <div aria-label="Live terminal mirror" />,
 }));
 
 import { HelmShell } from "@/components/helm-shell";
@@ -65,7 +65,8 @@ describe("live inbox shell", () => {
 
     expect(screen.queryByText("fixture")).toBeNull();
     expect(screen.getByRole("heading", { name: card.title })).toBeDefined();
-    expect(screen.getByText("Live firstmate inbox.")).toBeDefined();
+    // The card lands on the Open tab, which counts it.
+    expect(screen.getByRole("button", { name: /^Open\s*1$/ })).toBeDefined();
   });
 
   it("POSTs a typed keyed answer to the respond endpoint (AC 8)", async () => {
