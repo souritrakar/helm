@@ -60,8 +60,10 @@ key. Clicking the read-only mirror focuses that field; helm does not take
 control of the pane or start or stop Herdr sessions.
 
 **Inbox.** Ten read-only adapters publish a full open set. The store
-reconciles by id and streams changes over SSE. Open, Answered, and Dismissed
-tabs group cards into Decisions, Questions, Approvals, Answers, and Info.
+reconciles by id and streams changes over SSE. The Open tab groups cards by
+urgency (Blocking, Needs you, and For information); Answered and Dismissed
+show the most recently handled cards first. Cards are labelled as Decisions,
+Questions, Approvals, Answers, or Info.
 Questions from firstmate (`$FM_HOME/state/asks/*.json`) are answerable cards:
 their offered options and typed replies relay verbatim to the configured or
 discovered firstmate pane. Keyed status decisions answer through
